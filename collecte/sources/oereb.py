@@ -20,17 +20,31 @@ CODE_ZONE_RESERVEE = "ch.Planungszonen"
 
 
 def fetch_restrictions(egrids):
-    """egrids : liste d'EGRID. Renvoie {egrid: {en_zone_reservee, restrictions}}."""
+    """egrids : liste d'EGRID. Renvoie {egrid: {en_zone_reservee, restrictions}}.
+
+    Le webservice vaudois limite le débit (throttling) : on va donc doucement
+    (pause entre chaque appel) et on réessaie avec un backoff en cas d'échec.
+    """
     out = {}
     total = len(egrids)
     for i, egrid in enumerate(egrids):
-        info = _extract(egrid)
+        info = _extract_retry(egrid)
         if info is not None:
             out[egrid] = info
         if (i + 1) % 500 == 0:
             print(f"   OEREB : {i + 1}/{total} parcelles interrogées")
-        time.sleep(0.1)
+        time.sleep(0.25)
     return out
+
+
+def _extract_retry(egrid, tentatives=4):
+    """Réessaie l'extraction avec un backoff croissant (contre le throttling)."""
+    for k in range(tentatives):
+        info = _extract(egrid)
+        if info is not None:
+            return info
+        time.sleep(0.6 * (k + 1))
+    return None
 
 
 def _extract(egrid):
