@@ -273,9 +273,12 @@ def update_restrictions_parcelle(conn, restrictions):
     with conn.cursor() as cur:
         for egrid, info in restrictions.items():
             cur.execute(
-                "update parcelle set en_zone_reservee=%s, restrictions=%s::jsonb "
-                "where egrid=%s",
-                (info["en_zone_reservee"],
+                "update parcelle set en_zone_reservee=%s, affectation_detaillee=%s, "
+                "degre_bruit=%s, limite_construction=%s, surface_rf_m2=%s, "
+                "restrictions=%s::jsonb where egrid=%s",
+                (info["en_zone_reservee"], info.get("affectation_detaillee"),
+                 info.get("degre_bruit"), info.get("limite_construction"),
+                 info.get("surface_rf_m2"),
                  json.dumps(info["restrictions"], ensure_ascii=False), egrid),
             )
     conn.commit()

@@ -44,17 +44,54 @@ def _extract(egrid):
         return None
 
     item = d.get("Item", d)
-    themes = item.get("ConcernedTheme") or []
-    codes, labels = [], []
-    for t in themes:
-        code = t.get("Code")
-        txt = (t.get("Text") or [{}])[0].get("Text")
-        if code:
-            codes.append(code)
-        if txt and txt not in labels:
-            labels.append(txt)
+    bien = item.get("RealEstate") or {}
+    restrictions_src = bien.get("RestrictionOnLandownership") or []
+
+    zone_reservee = False
+    limite = False
+    bruit = None
+    affectation = None
+    aff_pct = -1
+    liste = []
+    for x in restrictions_src:
+        code = (x.get("Theme") or {}).get("Code")
+        legende = _txt(x.get("LegendText"))
+        pct = x.get("PartInPercent")
+        liste.append({"code": code, "legende": legende, "pct": pct})
+
+        if code == CODE_ZONE_RESERVEE:
+            zone_reservee = True
+        elif code == "ch.Laermempfindlichkeitsstufen" and legende:
+            bruit = legende
+        elif code and "Baulinien" in code:
+            limite = True
+        elif code == "ch.Nutzungsplanung" and legende and legende.lower().startswith("zone"):
+            p = pct if isinstance(pct, (int, float)) else 0
+            if p > aff_pct:
+                aff_pct, affectation = p, legende
 
     return {
-        "en_zone_reservee": CODE_ZONE_RESERVEE in codes,
-        "restrictions": labels,
+        "en_zone_reservee": zone_reservee,
+        "affectation_detaillee": affectation,
+        "degre_bruit": bruit,
+        "limite_construction": limite,
+        "surface_rf_m2": _num(bien.get("LandRegistryArea")),
+        "restrictions": liste,
     }
+
+
+def _txt(v):
+    """Récupère le texte d'un champ multilingue OEREB (liste ou dict)."""
+    if isinstance(v, list) and v:
+        return v[0].get("Text")
+    if isinstance(v, dict):
+        return v.get("Text")
+    return v
+
+
+def _num(v):
+    """LandRegistryArea peut être un nombre ou 'Surface non disponible'."""
+    try:
+        return float(str(v).strip())
+    except (TypeError, ValueError):
+        return None
