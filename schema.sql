@@ -34,7 +34,8 @@ create table if not exists parcelle (
   pente_pct          numeric,                        -- pente moyenne du terrain, en %
 
   -- Potentiel de densification (donnée brute, PAS un filtre/score) :
-  taux_occupation_sol      numeric,                  -- emprise bâtie / surface parcelle
+  emprise_batie_m2         numeric,                  -- somme des emprises au sol des bâtiments (GAREA)
+  taux_occupation_sol      numeric,                  -- emprise_batie_m2 / surface_m2
   indice_utilisation       numeric,                  -- indice d'utilisation autorisé (zone/règlement)
   surface_constructible_m2 numeric,                  -- surface de plancher autorisée (si calculable)
   restrictions             jsonb,                    -- restrictions diverses (OEREB, ISOS, zone réservée…)
