@@ -63,6 +63,48 @@ psql "$DATABASE_URL" -f schema.sql
 python -m collecte.run
 ```
 
+## Accès à la base pour le site / les collègues
+
+La base Supabase expose automatiquement une **API REST** (lecture seule
+publique grâce à la RLS). Le site lit donc les données directement, sans
+backend à coder.
+
+- **URL du projet** : `https://gwwioyvhhtskoasvsigc.supabase.co`
+- **Clé publishable** (sans danger côté front, lecture seule) :
+  `sb_publishable_Jqhmk-U2e7av_XvIg1HLUQ_fRLbH6Cy`
+- **Tables** : `parcelle`, `batiment`, `zone`, `collecte_run`, `changement`
+  (jointure parcelle ↔ bâtiments via `egrid`).
+
+### Client JavaScript (recommandé) — `npm install @supabase/supabase-js`
+
+```js
+import { createClient } from '@supabase/supabase-js'
+
+const supabase = createClient(
+  'https://gwwioyvhhtskoasvsigc.supabase.co',
+  'sb_publishable_Jqhmk-U2e7av_XvIg1HLUQ_fRLbH6Cy'
+)
+
+// Ex. : parcelles sous-densifiées et NON protégées
+const { data } = await supabase
+  .from('parcelle')
+  .select('numero, surface_m2, taux_occupation_sol, zone_affectation, note_recensement')
+  .lt('taux_occupation_sol', 0.1)   // peu bâti
+  .gt('note_recensement', 3)         // note 4-7 = pas d'obstacle patrimonial
+  .order('surface_m2', { ascending: false })
+```
+
+### REST direct (n'importe quel langage)
+
+```bash
+curl "https://gwwioyvhhtskoasvsigc.supabase.co/rest/v1/parcelle?select=*&taux_occupation_sol=lt.0.1" \
+  -H "apikey: sb_publishable_Jqhmk-U2e7av_XvIg1HLUQ_fRLbH6Cy"
+```
+
+> La clé publishable ne permet **que la lecture** (RLS). Seul le script de
+> collecte écrit, via la connexion Postgres privée (`.env`, jamais publiée).
+> Aucune donnée privée dans la base (ni propriétaire ni prix).
+
 ## Sources de données
 
 Voir le Google Sheet de l'équipe (inventaire des API). Principales :
