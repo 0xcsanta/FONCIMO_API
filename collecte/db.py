@@ -296,6 +296,41 @@ def update_pentes_parcelle(conn, pentes):
     return len(pentes)
 
 
+# ---------------------------------------------------------------------
+# Règles de constructibilité — règlement communal de Pully (RCATC,
+# en vigueur le 03.11.2017)
+#   - Art. 10 : indice d'occupation du sol <= 20 % dans toutes les zones à bâtir
+#   - Art. 37 : hauteur au faîte / nombre de niveaux selon la densité
+#   - Art. 39 : zone de villas
+# NB : règles propres à Pully. Pour une autre commune, il faudrait relire son
+# règlement (c'est la brique "lecture de PDF par un LLM").
+# ---------------------------------------------------------------------
+def apply_reglement_pully(conn):
+    """Remplit indice/surface constructible + hauteur/niveaux max par zone."""
+    with conn.cursor() as cur:
+        # Indice d'occupation du sol : emprise au sol max = 20 % de la parcelle,
+        # dans toutes les zones à bâtir (= celles ayant une zone d'affectation).
+        cur.execute("""
+            update parcelle set
+              indice_utilisation = 0.20,
+              surface_constructible_m2 = round((0.20 * surface_m2)::numeric, 1)
+            where zone_affectation is not null and surface_m2 is not null
+        """)
+        # Hauteur au faîte et nombre de niveaux max, selon l'affectation précise.
+        for motif, hauteur, niveaux in (
+            ("%faible densité%", 12, 3),
+            ("%moyenne densité%", 15, 4),
+            ("%forte densité%", 18, 5),
+            ("%villas%", 10, 3),
+        ):
+            cur.execute(
+                "update parcelle set hauteur_max_m=%s, niveaux_max=%s "
+                "where affectation_detaillee ilike %s",
+                (hauteur, niveaux, motif),
+            )
+    conn.commit()
+
+
 def _s(v):
     """None reste NULL ; sinon on stocke la valeur en texte."""
     return None if v is None else str(v)

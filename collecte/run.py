@@ -71,6 +71,10 @@ def main(declencheur="bouton"):
         db.update_pentes_parcelle(conn, pentes)
         print(f"  {len(pentes)} pentes calculées.")
 
+        # --- 8. Règles de constructibilité (règlement communal RCATC) ---
+        print("-> Application du règlement de Pully (indice, hauteur, niveaux)...")
+        db.apply_reglement_pully(conn)
+
         db.end_run(conn, run_id, "ok", nb_parc, nb_bat)
         print(f"Run #{run_id} terminé : {nb_parc} parcelles, {nb_bat} bâtiments.")
 
