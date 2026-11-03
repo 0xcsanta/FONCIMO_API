@@ -11,7 +11,7 @@ Usage :
 import sys
 
 from . import db, config
-from .sources import geo_admin, cadastre
+from .sources import geo_admin, cadastre, zones as zones_src, recensement
 
 # Windows : forcer l'UTF-8 sur la sortie pour éviter les erreurs d'encodage.
 try:
@@ -44,7 +44,21 @@ def main(declencheur="bouton"):
         print("-> Calcul du taux d'occupation...")
         db.recompute_taux_occupation(conn)
 
-        # --- 4. Recensement / zones / pente : à ajouter ici ---
+        # --- 4. Zones d'affectation (fédéral harmonisé) ---
+        print("-> Zones d'affectation (ch.are.bauzonen)...")
+        zs = zones_src.fetch_zones()
+        nb_zones = db.upsert_zones(conn, zs)
+        db.assign_zone_to_parcelle(conn)
+        print(f"  {nb_zones} zones ; parcelles rattachées à leur zone.")
+
+        # --- 5. Note de recensement architectural (WMS cantonal VD) ---
+        print("-> Recensement architectural (note par bâtiment)...")
+        notes = recensement.fetch_notes(batiments)
+        db.update_notes_batiment(conn, notes)
+        db.recompute_note_parcelle(conn)
+        print(f"  {len(notes)} bâtiments recensés (note récupérée).")
+
+        # --- 6. Pente / restrictions OEREB : à ajouter ici ---
 
         db.end_run(conn, run_id, "ok", nb_parc, nb_bat)
         print(f"Run #{run_id} terminé : {nb_parc} parcelles, {nb_bat} bâtiments.")

@@ -182,6 +182,73 @@ def recompute_taux_occupation(conn):
     conn.commit()
 
 
+# ---------------------------------------------------------------------
+# Zones d'affectation
+# ---------------------------------------------------------------------
+def upsert_zones(conn, zones):
+    """Recharge la table des zones et renvoie le nombre de zones."""
+    if not zones:
+        return 0
+    with conn.cursor() as cur:
+        cur.execute("truncate table zone")
+        for z in zones:
+            cur.execute(
+                "insert into zone (code_zone, libelle, bfs_no, source, geom) "
+                "values (%s, %s, %s, %s, "
+                "ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_GeomFromText(%s, 2056)), 3)))",
+                (z["code_zone"], z["libelle"], z["bfs_no"], z["source"], z["wkt"]),
+            )
+    conn.commit()
+    return len(zones)
+
+
+def assign_zone_to_parcelle(conn):
+    """Rattache chaque parcelle à sa zone (centroïde dans le polygone)."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            update parcelle p
+            set zone_affectation = z.libelle
+            from zone z
+            where z.geom && ST_Centroid(p.geom)
+              and ST_Intersects(z.geom, ST_Centroid(p.geom))
+        """)
+    conn.commit()
+
+
+# ---------------------------------------------------------------------
+# Note de recensement architectural
+# ---------------------------------------------------------------------
+def update_notes_batiment(conn, notes):
+    """notes : {egid: {note, mesure_protection, num_eca, lien_fiche}}."""
+    if not notes:
+        return 0
+    with conn.cursor() as cur:
+        for egid, info in notes.items():
+            cur.execute(
+                "update batiment set note_recensement=%s, mesure_protection=%s, "
+                "num_eca=%s, lien_fiche=%s where egid=%s",
+                (info.get("note"), info.get("mesure_protection"),
+                 info.get("num_eca"), info.get("lien_fiche"), egid),
+            )
+    conn.commit()
+    return len(notes)
+
+
+def recompute_note_parcelle(conn):
+    """Note de la parcelle = note la plus protectrice (min) de ses bâtiments."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            update parcelle p
+            set note_recensement = sub.note_min
+            from (select egrid, min(note_recensement) as note_min
+                  from batiment
+                  where egrid is not null and note_recensement is not null
+                  group by egrid) sub
+            where p.egrid = sub.egrid
+        """)
+    conn.commit()
+
+
 def _s(v):
     """None reste NULL ; sinon on stocke la valeur en texte."""
     return None if v is None else str(v)
