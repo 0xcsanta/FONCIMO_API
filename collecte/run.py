@@ -11,7 +11,7 @@ Usage :
 import sys
 
 from . import db, config
-from .sources import geo_admin
+from .sources import geo_admin, cadastre
 
 # Windows : forcer l'UTF-8 sur la sortie pour éviter les erreurs d'encodage.
 try:
@@ -34,8 +34,13 @@ def main(declencheur="bouton"):
         nb_bat = db.upsert_batiments(conn, batiments, run_id=run_id)
         print(f"  {nb_bat} bâtiments chargés.")
 
-        # --- 2. Parcelles / recensement / zones : à ajouter ici ---
-        nb_parc = 0
+        # --- 2. Parcelles (cadastre) ---
+        print("-> Recuperation des parcelles (cadastre)...")
+        parcelles = cadastre.fetch_parcelles()
+        nb_parc = db.upsert_parcelles(conn, parcelles, run_id=run_id)
+        print(f"  {nb_parc} parcelles chargées.")
+
+        # --- 3. Recensement / zones / pente : à ajouter ici ---
 
         db.end_run(conn, run_id, "ok", nb_parc, nb_bat)
         print(f"Run #{run_id} terminé : {nb_parc} parcelles, {nb_bat} bâtiments.")

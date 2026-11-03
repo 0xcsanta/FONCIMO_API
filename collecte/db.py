@@ -28,6 +28,9 @@ COLS_BAT = [
 # Champs qu'on surveille pour la détection de changements (veille mensuelle).
 CHAMPS_SUIVIS = ("annee_construction", "nb_logements", "nb_etages", "statut")
 
+# Colonnes écrites pour une parcelle (geom et recolte_le gérés à part).
+COLS_PARC = ["egrid", "numero", "commune", "no_commune", "canton", "surface_m2", "source"]
+
 
 def get_conn():
     """Ouvre une connexion à la base. DATABASE_URL vient de .env."""
@@ -125,6 +128,39 @@ def upsert_batiments(conn, batiments, run_id=None):
             )
     conn.commit()
     return len(batiments)
+
+
+def upsert_parcelles(conn, parcelles, run_id=None):
+    """Insère ou met à jour les parcelles (dicts), par lots, avec géométrie.
+
+    La géométrie est forcée en MultiPolygon valide via
+    ST_Multi(ST_CollectionExtract(ST_MakeValid(...), 3)) pour éviter tout
+    rejet dû à une géométrie auto-intersectante.
+    """
+    if not parcelles:
+        return 0
+
+    set_clause = ", ".join(
+        f"{c}=excluded.{c}" for c in COLS_PARC if c != "egrid"
+    ) + ", geom=excluded.geom, recolte_le=now()"
+
+    valeurs = [[p.get(c) for c in COLS_PARC] + [p.get("wkt")] for p in parcelles]
+    template = (
+        "(" + ", ".join(["%s"] * len(COLS_PARC)) + ", "
+        "ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_GeomFromText(%s, 2056)), 3)), now())"
+    )
+
+    with conn.cursor() as cur:
+        psycopg2.extras.execute_values(
+            cur,
+            f"insert into parcelle ({', '.join(COLS_PARC)}, geom, recolte_le) "
+            f"values %s on conflict (egrid) do update set {set_clause}",
+            valeurs,
+            template=template,
+            page_size=500,
+        )
+    conn.commit()
+    return len(parcelles)
 
 
 def _s(v):
