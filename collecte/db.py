@@ -163,6 +163,25 @@ def upsert_parcelles(conn, parcelles, run_id=None):
     return len(parcelles)
 
 
+def recompute_taux_occupation(conn):
+    """Recalcule le taux d'occupation du sol de chaque parcelle.
+
+    taux = emprise bâtie totale (somme des surfaces au sol des bâtiments
+    de la parcelle) / surface de la parcelle. C'est une donnée factuelle
+    (un simple ratio), pas un score : l'écart à 1 indique le potentiel brut.
+    """
+    with conn.cursor() as cur:
+        cur.execute("""
+            update parcelle p
+            set taux_occupation_sol = round((sub.emprise / p.surface_m2)::numeric, 3)
+            from (select egrid, sum(surface_sol_m2) as emprise
+                  from batiment where egrid is not null group by egrid) sub
+            where p.egrid = sub.egrid
+              and p.surface_m2 is not null and p.surface_m2 > 0
+        """)
+    conn.commit()
+
+
 def _s(v):
     """None reste NULL ; sinon on stocke la valeur en texte."""
     return None if v is None else str(v)
