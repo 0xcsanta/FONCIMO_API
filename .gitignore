@@ -1,0 +1,20 @@
+# Secrets / config locale
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Données récoltées en local (si export fichier)
+data/
+*.csv
+*.geojson
+
+# OS / éditeur
+.DS_Store
+.idea/
+.vscode/
