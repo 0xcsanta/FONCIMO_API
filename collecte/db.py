@@ -10,6 +10,8 @@ doublons — c'est exactement ce qu'il faut pour un rafraîchissement.
 Pour aller vite sur une base distante, on fait tout par lots (execute_values)
 et on ne lit qu'UNE fois l'état existant pour détecter les changements.
 """
+import json
+
 import psycopg2
 import psycopg2.extras
 
@@ -249,6 +251,46 @@ def recompute_note_parcelle(conn):
             where p.egrid = sub.egrid
         """)
     conn.commit()
+
+
+# ---------------------------------------------------------------------
+# Restrictions RDPPF/OEREB + pente
+# ---------------------------------------------------------------------
+def centroides_parcelles(conn):
+    """Renvoie [{egrid, cx, cy}] : le centroïde LV95 de chaque parcelle."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "select egrid, ST_X(ST_Centroid(geom)), ST_Y(ST_Centroid(geom)) "
+            "from parcelle where geom is not null"
+        )
+        return [{"egrid": r[0], "cx": r[1], "cy": r[2]} for r in cur.fetchall()]
+
+
+def update_restrictions_parcelle(conn, restrictions):
+    """restrictions : {egrid: {en_zone_reservee, restrictions(list)}}."""
+    if not restrictions:
+        return 0
+    with conn.cursor() as cur:
+        for egrid, info in restrictions.items():
+            cur.execute(
+                "update parcelle set en_zone_reservee=%s, restrictions=%s::jsonb "
+                "where egrid=%s",
+                (info["en_zone_reservee"],
+                 json.dumps(info["restrictions"], ensure_ascii=False), egrid),
+            )
+    conn.commit()
+    return len(restrictions)
+
+
+def update_pentes_parcelle(conn, pentes):
+    """pentes : {egrid: pente_pct}."""
+    if not pentes:
+        return 0
+    with conn.cursor() as cur:
+        for egrid, v in pentes.items():
+            cur.execute("update parcelle set pente_pct=%s where egrid=%s", (v, egrid))
+    conn.commit()
+    return len(pentes)
 
 
 def _s(v):

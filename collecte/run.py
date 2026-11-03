@@ -11,7 +11,7 @@ Usage :
 import sys
 
 from . import db, config
-from .sources import geo_admin, cadastre, zones as zones_src, recensement
+from .sources import geo_admin, cadastre, zones as zones_src, recensement, oereb, pente
 
 # Windows : forcer l'UTF-8 sur la sortie pour éviter les erreurs d'encodage.
 try:
@@ -58,7 +58,18 @@ def main(declencheur="bouton"):
         db.recompute_note_parcelle(conn)
         print(f"  {len(notes)} bâtiments recensés (note récupérée).")
 
-        # --- 6. Pente / restrictions OEREB : à ajouter ici ---
+        # --- 6. Restrictions RDPPF/OEREB (dont zone réservée) ---
+        print("-> Restrictions OEREB (RDPPF)...")
+        egrids = [p["egrid"] for p in parcelles]
+        restr = oereb.fetch_restrictions(egrids)
+        db.update_restrictions_parcelle(conn, restr)
+        print(f"  {len(restr)} parcelles avec restrictions renseignées.")
+
+        # --- 7. Pente du terrain ---
+        print("-> Pente du terrain (geo.admin)...")
+        pentes = pente.fetch_pentes(db.centroides_parcelles(conn))
+        db.update_pentes_parcelle(conn, pentes)
+        print(f"  {len(pentes)} pentes calculées.")
 
         db.end_run(conn, run_id, "ok", nb_parc, nb_bat)
         print(f"Run #{run_id} terminé : {nb_parc} parcelles, {nb_bat} bâtiments.")
