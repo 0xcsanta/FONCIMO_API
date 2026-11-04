@@ -1,8 +1,8 @@
 // =====================================================================
-//  Outil local d'analyse de potentiel (Pully)
-//  -> entre un numero de parcelle, sort les 3 strategies + la meilleure.
+//  Outil local d'analyse de potentiel (Pully) — modele pondere multi-facteurs
+//  -> entre un numero de parcelle, sort les 3 strategies (score pondere de
+//     ~12-13 facteurs chacune) + la meilleure, avec le detail facteur par facteur.
 //  Lancer :  npm install  puis  npm start   (http://localhost:4000)
-//  Se connecte a Postgres via DATABASE_URL (lu dans ../.env).
 // =====================================================================
 import http from "node:http";
 import fs from "node:fs";
@@ -13,118 +13,155 @@ import pg from "pg";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = 4000;
 
-// --- Lecture de DATABASE_URL dans ../.env (ou .env local) ---
 function lireEnv() {
   for (const p of [path.join(__dirname, "..", ".env"), path.join(__dirname, ".env")]) {
     if (fs.existsSync(p)) {
-      const txt = fs.readFileSync(p, "utf8");
-      const m = txt.match(/^\s*DATABASE_URL\s*=\s*(.+)\s*$/m);
+      const m = fs.readFileSync(p, "utf8").match(/^\s*DATABASE_URL\s*=\s*(.+)\s*$/m);
       if (m) return m[1].trim().replace(/^["']|["']$/g, "");
     }
   }
   return process.env.DATABASE_URL;
 }
 const connectionString = lireEnv();
-if (!connectionString) {
-  console.error("DATABASE_URL introuvable (ni dans ../.env, ni dans l'environnement).");
-  process.exit(1);
-}
+if (!connectionString) { console.error("DATABASE_URL introuvable (../.env)."); process.exit(1); }
 const pool = new pg.Pool({ connectionString, ssl: { rejectUnauthorized: false } });
 
 // =====================================================================
-//  SCORING  —  3 strategies independantes, note = la meilleure
-//  (tweake librement les constantes ci-dessous)
+//  SCORING pondere  —  tweake librement
 // =====================================================================
-const LAMBDA = 300;        // m2 de surface de plancher = "impressionnant" (plus bas = notes plus genereuses)
+const LAMBDA = 300;          // m2 de surface de plancher = "impressionnant"
 const GEL_MULT_DEFAUT = 0.6; // multiplicateur zone reservee (gel). 1 = "hors gel"
+
+// Poids (%) par strategie — exactement la grille fournie
+const POIDS = {
+  agrandissement: { G: 20, E: 8, P: 8, I: 10, L: 8, C: 6, N: 8, O: 5, V: 18, R: 4, B: 2, A: 3 },
+  elevation:      { G: 18, E: 8, S: 15, F: 10, T: 8, C: 6, N: 8, O: 5, V: 14, R: 3, B: 2, A: 3 },
+  demolition:     { G: 23, E: 8, P: 5, L: 8, C: 6, O: 5, V: 13, R: 4, B: 4, A: 2, D: 8, X: 8, Y: 6 },
+};
+const LABELS = {
+  G: "Gain net de surface", E: "Efficacité des surfaces", P: "Marge de pleine terre",
+  I: "Intégration au bâti conservé", S: "Structure", F: "Fondations existantes",
+  T: "Transformation de toiture", L: "Sol et terrain", C: "Conditions de chantier",
+  N: "Adaptations normatives du bâti", O: "Limitation des perturbations",
+  V: "Création de valeur comparative", R: "Robustesse économique", B: "Performance carbone",
+  A: "Ancienneté", D: "Besoin de renouvellement", X: "Déconstruction", Y: "Polluants",
+};
 
 const num = (x) => (x === null || x === undefined || x === "" ? null : Number(x));
 const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
-const ampleur = (dsp) => 1 - Math.exp(-Math.max(0, dsp) / LAMBDA);
-const labelFor = (n) =>
-  n == null ? "—" : n >= 75 ? "Fort potentiel" : n >= 50 ? "Potentiel intéressant" : n >= 25 ? "Potentiel modéré" : "Potentiel limité";
+const sat = (x, k = LAMBDA) => 1 - Math.exp(-Math.max(0, x) / k);
+const labelFor = (n) => n == null ? "—" : n >= 75 ? "Fort potentiel" : n >= 50 ? "Potentiel intéressant" : n >= 25 ? "Potentiel modéré" : "Potentiel limité";
 const exclue = (aff) => /verdure|besoins publics|utilit|d'?int[ée]r[êe]t public|sport|parc\b|agricole|for[êe]t|cimeti/i.test(aff || "");
+
+const ageNew = (a) => a == null ? 0.6 : a >= 2000 ? 1 : a >= 1980 ? 0.8 : a >= 1960 ? 0.6 : a >= 1940 ? 0.45 : 0.3; // recent = mieux
+const ageOld = (a) => a == null ? 0.6 : a < 1940 ? 1 : a < 1970 ? 0.8 : a < 2000 ? 0.5 : 0.25;                      // vieux = mieux
+const structR = (a) => a == null ? 0.55 : a >= 1990 ? 0.8 : a >= 1970 ? 0.65 : a >= 1950 ? 0.45 : 0.3;
+const penteR = (p) => p == null ? 0.8 : p <= 5 ? 1 : p <= 15 ? 0.9 : p <= 30 ? 0.7 : p <= 45 ? 0.45 : 0.25;
+
+// Notes de facteur (0..1) — c = contexte partage de la parcelle
+const R = {
+  G: (s, c) => sat(s === "agrandissement" ? c.dspAgr : s === "elevation" ? c.dspElev : c.dspDemo),
+  E: (s) => (s === "demolition" ? 0.80 : s === "elevation" ? 0.68 : 0.72),
+  P: (s, c) => { const free = c.S > 0 ? (c.S - c.Fmax) / c.S : 0; return clamp((free - 0.3) / 0.5, 0, 1); },
+  I: (s, c) => { let r = c.rec == null ? 0.9 : c.rec <= 2 ? 0.25 : c.rec === 3 ? 0.45 : c.rec === 4 ? 0.7 : 0.9; if (c.limite) r -= 0.1; return clamp(r, 0, 1); },
+  S: (s, c) => structR(c.annee),
+  F: (s, c) => clamp(structR(c.annee) * (1 - 0.08 * c.Nact), 0, 1),
+  T: (s, c) => { const base = c.Nmax != null && c.Nmax - c.Nact > 0 ? 0.7 : 0.3; const h = c.rec == null ? 1 : c.rec <= 3 ? 0.4 : 0.85; return clamp(base * h, 0, 1); },
+  L: (s, c) => clamp(penteR(c.pente) * (c.archeo ? 0.7 : 1), 0, 1),
+  C: (s, c) => { let r = penteR(c.pente) * (0.7 + 0.3 * sat(c.S, 1500)); if (c.central) r *= 0.85; if (s === "demolition") r *= 0.9; return clamp(r, 0, 1); },
+  N: (s, c) => ageNew(c.annee),
+  O: (s, c) => { let b = s === "agrandissement" ? 0.9 : s === "elevation" ? 0.6 : 0.3; if ((c.logts || 0) === 0) b += 0.2; return clamp(b, 0, 1); },
+  V: (s, c) => { const d = s === "agrandissement" ? c.dspAgr : s === "elevation" ? c.dspElev : c.dspDemo; return clamp(c.zoneP * sat(d, 400), 0, 1); },
+  R: (s, c) => clamp(0.4 + 0.5 * c.zoneP, 0, 1),
+  B: (s, c) => (s === "demolition" ? clamp(0.45 + 0.25 * ageOld(c.annee), 0, 1) : 0.75),
+  A: (s, c) => (s === "demolition" ? ageOld(c.annee) : ageNew(c.annee)),
+  D: (s, c) => { const u = c.SPmax > 0 ? clamp(1 - c.SPexist / c.SPmax, 0, 1) : 1; return clamp(0.5 * u + 0.5 * ageOld(c.annee), 0, 1); },
+  X: (s, c) => (c.nue ? 1 : clamp(1 - 0.5 * sat(c.SPexist, 1500), 0, 1)),
+  Y: (s, c) => (c.nue ? 1 : c.annee == null ? 0.6 : c.annee >= 1991 ? 0.9 : c.annee >= 1960 ? 0.4 : 0.55),
+};
+
+function zonePremium(aff) {
+  const a = (aff || "").toLowerCase();
+  if (a.includes("forte")) return 1;
+  if (a.includes("moyenne")) return 0.85;
+  if (a.includes("faible")) return 0.65;
+  if (a.includes("central")) return 0.9;
+  return 0.55;
+}
+
+function scoreStrat(strat, c) {
+  const w = POIDS[strat];
+  let total = 0;
+  const lignes = [];
+  for (const k in w) {
+    const r = R[k](strat, c);
+    const contrib = w[k] * r;
+    total += contrib;
+    lignes.push({ code: k, label: LABELS[k], poids: w[k], note: Math.round(r * 100) / 10, contrib: Math.round(contrib * 10) / 10 });
+  }
+  lignes.sort((a, b) => b.contrib - a.contrib);
+  return { score: Math.round(total), lignes };
+}
 
 function calcule(r, gelMult = GEL_MULT_DEFAUT) {
   const S = num(r.surface_m2) || 0;
   const aff = (r.affectation_detaillee || "") + "";
   const zone = r.zone_affectation || null;
   const indice = num(r.indice_utilisation);
-  const densifiable = indice !== null && zone !== null && !exclue(aff);
-  if (!densifiable) return { densifiable: false, horsPerimetre: true, aff, zone, numero: r.numero };
+  if (!(indice !== null && zone !== null && !exclue(aff)))
+    return { densifiable: false, horsPerimetre: true, aff, zone, numero: r.numero };
 
   let Fmax = num(r.surface_constructible_m2); if (Fmax == null) Fmax = (indice ?? 0.2) * S;
   let Fexist = num(r.emprise_batie_m2); if (Fexist == null) Fexist = num(r.emprise_bat) ?? 0;
   const Nmax = num(r.niveaux_max);
   const Nact = num(r.etages_max) ?? 0;
   const SPexist = num(r.sp_exist) ?? 0;
-  const SPmax = Nmax != null ? Fmax * Nmax : null;
+  const SPmax = Nmax != null ? Fmax * Nmax : Fmax * Math.max(Nact, 2);
   const annee = num(r.annee);
   const rec = num(r.note_recensement);
   const nue = Fexist <= 0 && SPexist <= 0;
 
-  // coefficients communs
-  const p = num(r.pente_pct);
-  const cPente = p == null ? 1 : p > 45 ? 0.5 : p > 30 ? 0.7 : p > 15 ? 0.9 : 1;
-  let cGlobal = 1;
-  if (r.en_zone_reservee === true) cGlobal *= gelMult;
-  const bruit = (r.degre_bruit || "").toUpperCase();
-  if (bruit.includes("IV")) cGlobal *= 0.9; else if (bruit.includes("III")) cGlobal *= 0.95;
-  if (r.en_zone_archeologique) cGlobal *= 0.9;
-
-  // 1) AGRANDISSEMENT au sol (etendre l'emprise, a hauteur existante)
   const dF = Math.max(0, Fmax - Fexist);
   const Nref = Math.min(Math.max(Nact, 1), Nmax || Math.max(Nact, 1));
   const dspAgr = dF * Nref;
-  let fAgr = 0.95 * cPente * cGlobal;
-  if (r.limite_construction) fAgr *= 0.7;
-  if (rec != null) fAgr *= rec <= 2 ? 0.3 : rec === 3 ? 0.6 : rec === 4 ? 0.85 : 1;
-  const sAgr = Math.round(100 * fAgr * ampleur(dspAgr));
-
-  // 2) SURELEVATION (ajouter des etages sur l'emprise existante)
   const dN = Nmax != null ? Math.max(0, Nmax - Nact) : 0;
   const dspElev = Fexist * dN;
-  let fElev = 0.85 * cPente * cGlobal;
-  if (rec != null) fElev *= rec <= 2 ? 0.1 : rec === 3 ? 0.4 : rec === 4 ? 0.7 : 1;
-  if (annee != null) fElev *= annee < 1940 ? 0.6 : annee < 1980 ? 0.85 : 1;
-  const sElev = Math.round(100 * fElev * ampleur(dspElev));
+  const dspDemo = Math.max(0, SPmax - SPexist);
 
-  // 3) DEMOLITION-RECONSTRUCTION (raser et rebatir au max)
-  const dspDemo = SPmax != null ? Math.max(0, SPmax - SPexist) : 0;
-  const baseDemo = nue ? 0.95 : 0.80;
-  let cPat = 1;
-  if (r.site_protege) cPat = 0;
-  if (rec != null) { if (rec <= 3) cPat = 0; else if (rec === 4) cPat = 0.4; }
-  const cAge = nue || annee == null ? 1 : annee < 1960 ? 1 : annee < 1985 ? 0.85 : annee < 2005 ? 0.6 : 0.3;
-  const fDemo = baseDemo * cPat * cAge * cPente * cGlobal;
-  const sDemo = Math.round(100 * fDemo * ampleur(dspDemo));
+  const c = {
+    S, Fmax, Fexist, Nmax, Nact, SPexist, SPmax, annee, rec, nue,
+    pente: num(r.pente_pct), logts: num(r.logts) ?? 0, zoneP: zonePremium(aff),
+    central: /central/i.test(aff), archeo: r.en_zone_archeologique === true,
+    limite: r.limite_construction === true, dspAgr, dspElev, dspDemo,
+  };
 
+  const gel = r.en_zone_reservee === true;
+  const mk = (cle, nom) => {
+    const s = scoreStrat(cle, c);
+    const score = Math.round(s.score * (gel ? gelMult : 1));
+    const dsp = cle === "agrandissement" ? dspAgr : cle === "elevation" ? dspElev : dspDemo;
+    return { cle, nom, score, dsp: Math.round(dsp), lignes: s.lignes, brut: s.score };
+  };
   const strategies = [
-    { cle: "agrandissement", nom: "Agrandissement au sol", dsp: Math.round(dspAgr), score: sAgr, f: fAgr,
-      detail: `+${Math.round(dF)} m² d'emprise × ${Nref} niveau(x)` },
-    { cle: "elevation", nom: "Surélévation", dsp: Math.round(dspElev), score: sElev, f: fElev,
-      detail: `+${dN} niveau(x) × ${Math.round(Fexist)} m² d'emprise` },
-    { cle: "demolition", nom: nue ? "Construction neuve" : "Démolition-reconstruction", dsp: Math.round(dspDemo), score: sDemo, f: fDemo,
-      detail: `${Math.round(SPmax ?? 0)} m² max − ${Math.round(SPexist)} m² existants` },
+    mk("agrandissement", "Agrandissement au sol"),
+    mk("elevation", "Surélévation"),
+    mk("demolition", nue ? "Construction neuve" : "Démolition-reconstruction"),
   ];
   const best = strategies.reduce((a, b) => (b.score > a.score ? b : a));
 
   return {
-    densifiable: true,
-    numero: r.numero,
-    inputs: { S: Math.round(S), aff, Fmax: Math.round(Fmax), Fexist: Math.round(Fexist), Nmax, Nact,
-      SPexist: Math.round(SPexist), SPmax: SPmax == null ? null : Math.round(SPmax),
-      annee, rec, gel: r.en_zone_reservee === true, pente: p, nue,
-      archeo: r.en_zone_archeologique === true, site_protege: r.site_protege || null,
-      limite: r.limite_construction === true, bruit: r.degre_bruit || null },
-    strategies,
-    best,
-    note: best.score,
-    label: labelFor(best.score),
+    densifiable: true, numero: r.numero, gel,
+    inputs: {
+      S: Math.round(S), aff, Fmax: Math.round(Fmax), Fexist: Math.round(Fexist),
+      Nmax, Nact, SPexist: Math.round(SPexist), SPmax: Math.round(SPmax),
+      annee, rec, gel, pente: c.pente, nue, logts: c.logts,
+      contraintes: [c.limite && "alignement", c.archeo && "archéo", r.site_protege && "site protégé", r.degre_bruit].filter(Boolean).join(", ") || "—",
+    },
+    strategies, best, note: best.score, label: labelFor(best.score),
   };
 }
 
-// --- Requete parcelle + agregats batiment ---
+// --- Requete ---
 const SQL = `
 with b as (
   select egrid,
@@ -142,8 +179,7 @@ select p.numero, p.commune, p.affectation_detaillee, p.zone_affectation,
   p.en_zone_archeologique, p.limite_construction, p.degre_bruit, p.en_zone_reservee, p.pente_pct,
   coalesce(b.sp_exist,0) sp_exist, coalesce(b.etages_max,0) etages_max,
   b.emprise_bat, b.logts, b.annee, coalesce(b.nb_bat,0) nb_bat
-from parcelle p
-left join b on b.egrid = p.egrid
+from parcelle p left join b on b.egrid = p.egrid
 where p.commune ilike 'Pully' and p.numero = $1
 limit 1;`;
 
@@ -153,15 +189,12 @@ async function analyser(numero, gelMult) {
   return { found: true, ...calcule(rows[0], gelMult) };
 }
 
-// --- Serveur HTTP ---
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   if (url.pathname === "/api/calc") {
     try {
-      const numero = url.searchParams.get("numero") || "";
-      const gel = url.searchParams.get("gel");
-      const gelMult = gel === "0" ? 1 : GEL_MULT_DEFAUT;
-      const out = await analyser(numero, gelMult);
+      const gelMult = url.searchParams.get("gel") === "0" ? 1 : GEL_MULT_DEFAUT;
+      const out = await analyser(url.searchParams.get("numero") || "", gelMult);
       res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
       res.end(JSON.stringify(out));
     } catch (e) {
@@ -175,37 +208,36 @@ const server = http.createServer(async (req, res) => {
 });
 server.listen(PORT, () => console.log(`\n  Outil parcelle -> http://localhost:${PORT}\n`));
 
-// --- Page (UI) ---
 const PAGE = `<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Potentiel parcelle — Pully</title>
 <style>
   :root{--g:#2a3c37;--gd:#233029;--lime:#d3de79;--mut:#5a6b63;--bg:#eef1ef}
   *{box-sizing:border-box} body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Arial,sans-serif;background:var(--bg);color:#1d2622}
-  header{background:var(--g);color:#fff;padding:18px 24px}
-  header b{color:var(--lime);font-size:20px} header span{color:#9fb0a7;font-size:12px;text-transform:uppercase;letter-spacing:.06em;margin-left:10px}
-  .wrap{max-width:1000px;margin:0 auto;padding:24px}
+  header{background:var(--g);color:#fff;padding:18px 24px} header b{color:var(--lime);font-size:20px}
+  header span{color:#9fb0a7;font-size:12px;text-transform:uppercase;letter-spacing:.06em;margin-left:10px}
+  .wrap{max-width:1040px;margin:0 auto;padding:24px}
   .search{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
   input{font-size:16px;padding:12px 14px;border:1px solid #cfd6d2;border-radius:8px;width:200px}
   button{font-size:15px;font-weight:600;padding:12px 22px;border:none;border-radius:8px;background:var(--lime);color:var(--gd);cursor:pointer}
   label.toggle{font-size:14px;color:var(--mut);display:flex;gap:6px;align-items:center;cursor:pointer}
   .hint{color:var(--mut);font-size:13px;margin:4px 0 20px}
   .final{display:flex;align-items:center;gap:20px;background:#fff;border-radius:14px;padding:22px 24px;margin-bottom:18px;border:1px solid #e3e7e8}
-  .final .num{font-size:52px;font-weight:800;line-height:1}
-  .final .meta{font-size:14px;color:var(--mut)}
-  .final .voie{font-weight:700;font-size:17px}
-  .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:18px}
+  .final .num{font-size:52px;font-weight:800;line-height:1} .final .voie{font-weight:700;font-size:17px} .final .meta{font-size:14px;color:var(--mut)}
+  .cards{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:10px}
   .card{background:#fff;border:1px solid #e3e7e8;border-radius:12px;padding:18px}
   .card.best{border:2px solid var(--lime);box-shadow:0 6px 18px rgba(0,0,0,.06)}
-  .card h3{margin:0 0 4px;font-size:15px}
-  .card .sp{font-size:13px;color:var(--mut)}
-  .card .sc{font-size:40px;font-weight:800;margin:8px 0 2px}
-  .card .f{font-size:12px;color:var(--mut)}
-  .badge{display:inline-block;font-size:11px;font-weight:700;color:var(--gd);background:var(--lime);padding:2px 8px;border-radius:20px;margin-left:6px}
-  table{width:100%;border-collapse:collapse;background:#fff;border-radius:12px;overflow:hidden;border:1px solid #e3e7e8}
-  td{padding:9px 14px;font-size:14px;border-top:1px solid #eef1ef} td:first-child{color:var(--mut)} td:last-child{text-align:right;font-weight:600}
-  h2{font-size:14px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);margin:22px 0 8px}
-  .err{color:#b4341f;font-weight:600}
-  .sub{color:var(--mut);font-size:13px}
+  .card h3{margin:0 0 6px;font-size:15px} .card .sc{font-size:40px;font-weight:800;margin:4px 0 2px}
+  .card .sp{font-size:12px;color:var(--mut)} .badge{display:inline-block;font-size:11px;font-weight:700;color:var(--gd);background:var(--lime);padding:2px 8px;border-radius:20px;margin-left:6px}
+  .topf{margin-top:8px;font-size:12px;color:var(--mut);line-height:1.5}
+  details{background:#fff;border:1px solid #e3e7e8;border-radius:12px;margin-bottom:10px;padding:4px 14px}
+  summary{cursor:pointer;font-weight:600;padding:12px 2px} summary .s{color:var(--mut);font-weight:400}
+  table{width:100%;border-collapse:collapse} td,th{padding:7px 8px;font-size:13px;border-top:1px solid #eef1ef;text-align:right}
+  th{color:var(--mut);font-weight:600;text-align:right} td:first-child,th:first-child{text-align:left}
+  .bar{height:7px;background:#eef1ef;border-radius:4px;overflow:hidden;min-width:70px;display:inline-block;vertical-align:middle}
+  .bar>i{display:block;height:100%;background:var(--lime)}
+  h2{font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);margin:20px 0 8px}
+  .infos td{border-top:1px solid #eef1ef} .infos td:first-child{color:var(--mut)} .infos td:last-child{font-weight:600}
+  .err{color:#b4341f;font-weight:600} .sub{color:var(--mut);font-size:13px}
 </style></head><body>
 <header><b>foncimo</b><span>Outil d'analyse de potentiel — Pully</span></header>
 <div class="wrap">
@@ -214,56 +246,50 @@ const PAGE = `<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta n
     <button onclick="go()">Analyser</button>
     <label class="toggle"><input type="checkbox" id="gel" checked> appliquer le gel (zone réservée ×0.6)</label>
   </div>
-  <div class="hint">Astuce : 365 (fort), 118 (fort, nue), 3551 (gelée), 701 (hors périmètre).</div>
+  <div class="hint">Astuce : 365 (fort), 118 (fort, nue), 3676 (modérée), 3551 (gelée), 701 (hors périmètre).</div>
   <div id="out"></div>
 </div>
 <script>
-const $ = (id)=>document.getElementById(id);
+const $=(id)=>document.getElementById(id);
+function coul(n){return n>=75?'#6f9c2f':n>=50?'#b79a1f':n>=25?'#c47a2b':'#b4341f';}
 async function go(){
-  const n = $('num').value.trim();
-  if(!n) return;
-  const gel = $('gel').checked ? '1':'0';
-  $('out').innerHTML = '<p class="sub">Calcul…</p>';
-  try{
-    const r = await fetch('/api/calc?numero='+encodeURIComponent(n)+'&gel='+gel);
-    const d = await r.json();
-    render(d);
-  }catch(e){ $('out').innerHTML = '<p class="err">Erreur : '+e.message+'</p>'; }
+  const n=$('num').value.trim(); if(!n) return;
+  $('out').innerHTML='<p class="sub">Calcul…</p>';
+  try{ const r=await fetch('/api/calc?numero='+encodeURIComponent(n)+'&gel='+($('gel').checked?'1':'0')); render(await r.json()); }
+  catch(e){ $('out').innerHTML='<p class="err">Erreur : '+e.message+'</p>'; }
 }
 function render(d){
-  if(d.error){ $('out').innerHTML='<p class="err">'+d.error+'</p>'; return; }
-  if(!d.found){ $('out').innerHTML='<p class="err">Parcelle introuvable à Pully.</p>'; return; }
-  if(!d.densifiable){ $('out').innerHTML='<div class="final"><div><div class="voie">Hors périmètre de densification</div><div class="meta">'+(d.aff||d.zone||'')+'</div></div></div>'; return; }
-  const i=d.inputs;
-  const cards = d.strategies.map(s=>{
-    const best = s.cle===d.best.cle;
+  if(d.error){$('out').innerHTML='<p class="err">'+d.error+'</p>';return;}
+  if(!d.found){$('out').innerHTML='<p class="err">Parcelle introuvable à Pully.</p>';return;}
+  if(!d.densifiable){$('out').innerHTML='<div class="final"><div><div class="voie">Hors périmètre de densification</div><div class="meta">'+(d.aff||d.zone||'')+'</div></div></div>';return;}
+  const cards=d.strategies.map(s=>{
+    const best=s.cle===d.best.cle;
+    const top=s.lignes.slice(0,3).map(l=>l.code+' '+l.contrib+' pts').join(' · ');
     return '<div class="card'+(best?' best':'')+'"><h3>'+s.nom+(best?'<span class="badge">meilleure</span>':'')+'</h3>'
-      +'<div class="sp">'+s.detail+'</div>'
-      +'<div class="sc">'+(s.score/10).toFixed(1)+'<span style="font-size:16px;color:#b9c2bc">/10</span></div>'
-      +'<div class="sp">+'+s.dsp+' m² de plancher</div>'
-      +'<div class="f">faisabilité '+Math.round(s.f*100)+'%</div></div>';
+      +'<div class="sc" style="color:'+coul(s.score)+'">'+(s.score/10).toFixed(1)+'<span style="font-size:16px;color:#b9c2bc">/10</span></div>'
+      +'<div class="sp">+'+s.dsp+' m² de plancher'+(d.gel?' · brut '+(s.brut/10).toFixed(1):'')+'</div>'
+      +'<div class="topf">top : '+top+'</div></div>';
   }).join('');
-  const rows = [
-    ['Affectation', i.aff],
-    ['Surface parcelle', i.S+' m²'],
-    ['Emprise max autorisée (Fmax)', i.Fmax+' m²'],
-    ['Emprise bâtie actuelle (Fexist)', i.Fexist+' m²'],
-    ['Niveaux max / actuels', (i.Nmax??'—')+' / '+i.Nact],
-    ['Surf. plancher existante / max', i.SPexist+' / '+(i.SPmax??'—')+' m²'],
-    ['Année construction', i.annee??'—'],
-    ['Recensement bâtiment', i.rec??'—'],
-    ['Zone réservée (gel)', i.gel?'OUI':'non'],
-    ['Pente', (i.pente??'—')+' %'],
-    ['Contraintes', [i.limite&&'alignement', i.archeo&&'archéo', i.site_protege&&'site protégé', i.bruit].filter(Boolean).join(', ')||'—'],
-  ].map(r=>'<tr><td>'+r[0]+'</td><td>'+r[1]+'</td></tr>').join('');
-  $('out').innerHTML =
+  const tables=d.strategies.map(s=>{
+    const rows=s.lignes.map(l=>'<tr><td>'+l.code+' — '+l.label+'</td><td>'+l.poids+'%</td><td>'+l.note.toFixed(1)+'</td>'
+      +'<td><span class="bar" style="width:90px"><i style="width:'+Math.round(l.contrib/l.poids*100)+'%"></i></span></td><td>'+l.contrib+'</td></tr>').join('');
+    return '<details'+(s.cle===d.best.cle?' open':'')+'><summary>'+s.nom+' <span class="s">— '+(s.score/10).toFixed(1)+'/10</span></summary>'
+      +'<table><tr><th>Facteur</th><th>Poids</th><th>Note/10</th><th>Note</th><th>Contrib.</th></tr>'+rows+'</table></details>';
+  }).join('');
+  const i=d.inputs;
+  const infos=[['Affectation',i.aff],['Surface',i.S+' m²'],['Emprise max / actuelle',i.Fmax+' / '+i.Fexist+' m²'],
+    ['Niveaux max / actuels',(i.Nmax??'—')+' / '+i.Nact],['Surf. plancher existante / max',i.SPexist+' / '+i.SPmax+' m²'],
+    ['Logements actuels',i.logts],['Année',i.annee??'—'],['Recensement',i.rec??'—'],
+    ['Zone réservée (gel)',i.gel?'OUI':'non'],['Pente',(i.pente??'—')+' %'],['Contraintes',i.contraintes]]
+    .map(r=>'<tr><td>'+r[0]+'</td><td>'+r[1]+'</td></tr>').join('');
+  $('out').innerHTML=
     '<div class="final"><div class="num" style="color:'+coul(d.note)+'">'+(d.note/10).toFixed(1)+'<span style="font-size:22px;color:#b9c2bc;font-weight:600">/10</span></div>'
     +'<div><div class="voie">'+d.label+'</div><div class="meta">Parcelle '+d.numero+' · meilleure voie : <b>'+d.best.nom+'</b></div></div></div>'
     +'<h2>Les 3 stratégies</h2><div class="cards">'+cards+'</div>'
-    +'<h2>Chiffres utilisés</h2><table>'+rows+'</table>';
+    +'<h2>Détail par facteur</h2>'+tables
+    +'<h2>Chiffres utilisés</h2><table class="infos">'+infos+'</table>';
 }
-function coul(n){return n>=75?'#6f9c2f':n>=50?'#b79a1f':n>=25?'#c47a2b':'#b4341f';}
 $('num').addEventListener('keydown',e=>{if(e.key==='Enter')go();});
-$('gel').addEventListener('change',()=>{ if($('num').value.trim()) go(); });
+$('gel').addEventListener('change',()=>{if($('num').value.trim())go();});
 </script>
 </body></html>`;
