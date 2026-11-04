@@ -276,7 +276,7 @@ const PAGE = `<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta n
   <div class="hint">Astuce : 365 (fort), 118 (fort, nue), 3676 (modérée), 3551 (gelée), 701 (hors périmètre).</div>
   <details id="poidsPanel"><summary>⚙️ Pondération des facteurs <span class="s">— modifiable (le score se normalise)</span></summary>
     <div id="ed"></div>
-    <div class="act"><button class="lite" onclick="resetPoids()">Réinitialiser la grille</button><span class="sub" id="poidsMsg"></span></div>
+    <div class="act"><button onclick="go()">Recalculer</button><button class="lite" onclick="resetPoids()">Réinitialiser la grille</button><span class="sub" id="poidsMsg"></span></div>
   </details>
   <div id="out"></div>
 </div>
@@ -310,11 +310,13 @@ function buildEditor(){
   $('ed').querySelectorAll('input').forEach(inp=>inp.addEventListener('input',onPoids));
   majSommes();
 }
+let _deb;
+function recalc(){ clearTimeout(_deb); _deb=setTimeout(()=>{ if($('num').value.trim()) go(); }, 300); }
 function onPoids(e){
   const s=e.target.dataset.s,k=e.target.dataset.k; let v=Number(e.target.value); if(!isFinite(v)||v<0)v=0;
   POIDS[s][k]=v; try{localStorage.setItem('foncimo-poids',JSON.stringify(POIDS));}catch(_){}
   majSommes();
-  if($('num').value.trim()) go();
+  recalc(); // le calcul se relance tout seul apres chaque modification
 }
 function majSommes(){
   for(const s of ['agrandissement','elevation','demolition']){
