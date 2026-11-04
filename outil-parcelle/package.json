@@ -1,0 +1,12 @@
+{
+  "name": "outil-parcelle",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node serveur.mjs"
+  },
+  "dependencies": {
+    "pg": "8.13.1"
+  }
+}
