@@ -1,0 +1,41 @@
+name: Supabase keepalive
+
+# Garde la base Supabase (plan gratuit) eveillee : une requete legere toutes
+# les ~48 h empeche la mise en pause automatique apres 7 jours d'inactivite.
+#
+# Le ping DOIT venir de l'exterieur : un cron interne a Supabase (pg_cron) ne
+# tournerait plus une fois la base en pause. GitHub Actions est externe -> OK.
+#
+# Remarques :
+#  - La cle utilisee est la cle PUBLIABLE (publishable/anon), deja publique
+#    (elle est dans le README et sert au site). Ce n'est pas un secret.
+#  - Ce workflow EMPECHE la mise en veille ; il ne REVEILLE pas une base deja
+#    en pause (ca se fait a la main depuis le dashboard, bouton "Restore").
+#  - GitHub desactive un workflow planifie apres 60 jours sans commit sur le
+#    repo ; tant que le projet vit, ce n'est pas un souci.
+
+on:
+  schedule:
+    - cron: "17 4 */2 * *"   # tous les 2 jours a 04:17 UTC
+  workflow_dispatch:          # bouton "Run workflow" manuel dans l'onglet Actions
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Requete SELECT legere sur l'API REST
+        run: |
+          set -euo pipefail
+          URL="https://gwwioyvhhtskoasvsigc.supabase.co/rest/v1/parcelle?select=egrid&limit=1"
+          KEY="sb_publishable_Jqhmk-U2e7av_XvIg1HLUQ_fRLbH6Cy"
+          code=$(curl -s -o /tmp/resp.json -w "%{http_code}" \
+            -H "apikey: ${KEY}" \
+            -H "Authorization: Bearer ${KEY}" \
+            "${URL}")
+          echo "HTTP ${code}"
+          echo "Reponse : $(cat /tmp/resp.json)"
+          if [ "${code}" != "200" ]; then
+            echo "::error::Ping Supabase en echec (HTTP ${code}) - la base est peut-etre en pause ou la cle a change."
+            exit 1
+          fi
+          echo "Ping OK - la base est active, compteur d'inactivite remis a zero."
