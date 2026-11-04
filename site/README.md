@@ -1,4 +1,4 @@
-# Foncimo — site vitrine (reproduction)
+# Foncimo - site vitrine (reproduction)
 
 Reproduction fidèle du site [foncimo.ch](https://www.foncimo.ch/) en **Next.js 14 (App Router) + React 18**.
 
@@ -32,5 +32,5 @@ components/
 ## Notes
 
 - Police : **Kanit** (Google Fonts, chargée via `next/font`).
-- Photos : images libres de droits (Unsplash) — à remplacer par les visuels définitifs.
+- Photos : images libres de droits (Unsplash), à remplacer par les visuels définitifs.
 - Contenu textuel repris du site Foncimo ; logos clients rendus en texte (placeholders).

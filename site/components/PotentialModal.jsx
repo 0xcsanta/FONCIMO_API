@@ -20,8 +20,8 @@ function NoteCard({ titre, note, label }) {
     <div className="note-card">
       <div className="note-card-head">{titre}</div>
       <div className="note-value" style={{ color: c }}>
-        {note === null || note === undefined ? "—" : note}
-        <span className="note-max">/100</span>
+        {note === null || note === undefined ? "n/a" : note}
+        {note !== null && note !== undefined && <span className="note-max">/100</span>}
       </div>
       <div className="note-bar">
         <div className="note-bar-fill" style={{ width: `${note || 0}%`, background: c }} />
@@ -125,7 +125,7 @@ export default function PotentialModal({ onClose }) {
           <div className="modal-form">
             <span className="eyebrow" style={{ color: "#8fae3c" }}>Estimation gratuite</span>
             <h2>Et si votre terrain avait plus de potentiel que vous ne le pensez&nbsp;?</h2>
-            <p>Entrez votre numéro de parcelle ou votre adresse à <strong>Pully</strong> — note de potentiel en 30 secondes.</p>
+            <p>Entrez votre numéro de parcelle ou votre adresse à <strong>Pully</strong> et obtenez votre note de potentiel en 30 secondes.</p>
 
             <div className="seg">
               {[["auto", "Auto"], ["numero", "N° parcelle"], ["adresse", "Adresse"]].map(([v, l]) => (
@@ -167,14 +167,14 @@ export default function PotentialModal({ onClose }) {
 
             <div className="detail-block">
               <div className="detail-head">
-                <strong>Détail du calcul — densification</strong>
+                <strong>Détail du calcul : densification</strong>
                 {!revealed && <span className="lock">🔒 masqué</span>}
               </div>
               <DetailList score={data.densification} revealed={revealed} />
               {data.valorisation.facteurs && (
                 <>
                   <div className="detail-head" style={{ marginTop: 14 }}>
-                    <strong>Détail du calcul — valorisation</strong>
+                    <strong>Détail du calcul : valorisation</strong>
                   </div>
                   <DetailList score={data.valorisation} revealed={revealed} />
                 </>
@@ -201,7 +201,7 @@ export default function PotentialModal({ onClose }) {
               </form>
             ) : (
               <div className="done-block">
-                <p className="done-title">✓ Détail révélé{emailSent ? " — un email vous a été envoyé." : "."}</p>
+                <p className="done-title">✓ Détail révélé{emailSent ? ", un email vous a été envoyé." : "."}</p>
                 <p>Ces notes sont des indicateurs automatiques. Pour l'analyse réelle (droits à bâtir, faisabilité, valorisation), <strong>prenons rendez-vous</strong> : au bureau à Pully, ou Foncimo se déplace chez vous.</p>
                 <a className="btn btn-lime" href="/contact" style={{ marginTop: 10 }}>Prendre rendez-vous</a>
               </div>

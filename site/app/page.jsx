@@ -84,7 +84,7 @@ export default function Home() {
                 <h3>Pilotage de projet immobilier</h3>
                 <p>
                   Nous vous accompagnons dans chaque étape de votre projet
-                  immobilier — de la définition des besoins à la réception de
+                  immobilier, de la définition des besoins à la réception de
                   l'ouvrage.
                 </p>
                 <ul>

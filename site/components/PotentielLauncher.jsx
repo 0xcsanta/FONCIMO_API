@@ -6,7 +6,7 @@ import PotentialModal from "@/components/PotentialModal";
 export default function PotentielLauncher() {
   const [open, setOpen] = useState(false);
 
-  // Ouverture automatique une fois par session (après 4 s)
+  // Ouverture automatique une fois par session (après 3 s)
   useEffect(() => {
     let shown = false;
     try {
@@ -22,7 +22,7 @@ export default function PotentielLauncher() {
       } catch (e) {
         /* ignore */
       }
-    }, 4000);
+    }, 3000);
     return () => clearTimeout(t);
   }, []);
 

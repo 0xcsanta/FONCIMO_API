@@ -1,7 +1,7 @@
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
 
-export const metadata = { title: "Société — Foncimo" };
+export const metadata = { title: "Société - Foncimo" };
 
 export default function SocietePage() {
   return (

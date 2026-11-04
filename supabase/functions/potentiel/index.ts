@@ -187,37 +187,114 @@ function scoreValorisation(d: Record<string, unknown>) {
 // --------------------------- EMAIL -----------------------------------
 async function envoyerEmail(to: string, parc: Record<string, unknown>, dens: any, valo: any): Promise<boolean> {
   if (!RESEND_API_KEY) return false;
-  const ligne = (f: Facteur) =>
-    `<tr><td style="padding:4px 10px;color:#5a6b63">${f.label}</td><td style="padding:4px 10px;text-align:right;color:#1d2622">${f.valeur}</td><td style="padding:4px 10px;text-align:right;font-weight:600;color:${f.points < 0 ? "#b4341f" : "#2a3c37"}">${f.points > 0 ? "+" : ""}${f.points}</td></tr>`;
-  const bloc = (titre: string, s: any) =>
-    `<h3 style="font-family:sans-serif;color:#2a3c37;margin:18px 0 6px">${titre} — ${s.note ?? "—"}/100 <span style="color:#8a948f;font-weight:400">(${s.label})</span></h3>
-     <table style="border-collapse:collapse;width:100%;font-family:sans-serif;font-size:14px">${(s.facteurs || []).map(ligne).join("")}</table>`;
+  const couleur = (n: number | null | undefined) =>
+    n === null || n === undefined ? "#9aa5a0" : n >= 75 ? "#6f9c2f" : n >= 50 ? "#b79a1f" : n >= 25 ? "#c47a2b" : "#b4341f";
   const adresse = parc.adresse ? String(parc.adresse) : `parcelle n°${parc.numero}`;
-  const html = `
-  <div style="max-width:620px;margin:0 auto;font-family:sans-serif;color:#1d2622">
-    <div style="background:#2a3c37;color:#fff;padding:22px 24px;border-radius:8px 8px 0 0">
-      <span style="color:#d3de79;font-size:22px;font-weight:600">foncimo</span>
-      <div style="margin-top:8px;font-size:15px">Le détail du potentiel de votre parcelle</div>
-    </div>
-    <div style="border:1px solid #e3e7e8;border-top:0;padding:24px;border-radius:0 0 8px 8px">
-      <p>Bonjour,</p>
-      <p>Voici le détail du calcul pour <strong>${adresse}</strong> (${parc.commune}, ${parc.surface_m2 ? Math.round(Number(parc.surface_m2)) + " m²" : ""}).</p>
-      ${bloc("Potentiel de densification", dens)}
-      ${bloc("Valorisation (indicatif)", valo)}
-      <p style="margin-top:18px;padding:14px;border-left:3px solid #d3de79;background:#f4f6ec">
-        Ces notes sont des <strong>indicateurs automatiques</strong>. L'analyse réelle — droits à bâtir exacts, faisabilité, valorisation — nécessite une expertise. <strong>Prenons rendez-vous :</strong> au bureau à Pully, ou je me déplace chez vous.
-      </p>
-      <p style="text-align:center;margin:24px 0">
-        <a href="${RDV_URL}" style="background:#d3de79;color:#233029;text-decoration:none;font-weight:600;padding:13px 26px;border-radius:5px;display:inline-block">Prendre rendez-vous</a>
-      </p>
-      <p style="color:#8a948f;font-size:12px">Foncimo SA — Pilotage de projet & expertise immobilière — Pully (VD)</p>
-    </div>
-  </div>`;
+  const surf = parc.surface_m2 ? Math.round(Number(parc.surface_m2)) + " m²" : "";
+  const zone = parc.zone_affectation ? String(parc.zone_affectation) : "";
+
+  const ligne = (f: Facteur, i: number) => {
+    const bg = i % 2 ? "#fafbf9" : "#ffffff";
+    return `<tr>
+      <td style="padding:11px 16px;font-family:'Kanit',Arial,sans-serif;font-size:13px;color:#51605a;background:${bg};border-top:1px solid #eef1ef">${f.label}</td>
+      <td style="padding:11px 16px;font-family:'Kanit',Arial,sans-serif;font-size:13px;color:#1d2622;text-align:right;background:${bg};border-top:1px solid #eef1ef">${f.valeur}</td>
+      <td style="padding:11px 16px;font-family:'Kanit',Arial,sans-serif;font-size:13px;font-weight:700;text-align:right;color:${f.points < 0 ? "#b4341f" : "#2a3c37"};background:${bg};border-top:1px solid #eef1ef">${f.points > 0 ? "+" : ""}${f.points}</td>
+    </tr>`;
+  };
+
+  const carteScore = (titre: string, s: any) => `
+    <td width="50%" valign="top" style="padding:0 6px">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:separate;background:#ffffff;border:1px solid #e7ebe8;border-radius:14px">
+        <tr><td align="center" style="padding:22px 12px">
+          <div style="font-family:'Kanit',Arial,sans-serif;font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:#93a09a">${titre}</div>
+          <div style="font-family:'Kanit',Georgia,serif;font-size:46px;font-weight:700;line-height:1.05;color:${couleur(s.note)};margin:8px 0 6px">${s.note ?? "n/a"}<span style="font-size:15px;color:#b9c2bc">/100</span></div>
+          <span style="display:inline-block;font-family:'Kanit',Arial,sans-serif;font-size:11px;font-weight:700;letter-spacing:.02em;color:${couleur(s.note)};background:#f2f5ea;padding:5px 14px;border-radius:30px">${s.label}</span>
+        </td></tr>
+      </table>
+    </td>`;
+
+  const bloc = (titre: string, s: any) => `
+    <tr><td style="padding:24px 30px 0">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td style="font-family:'Kanit',Arial,sans-serif;font-size:15px;font-weight:700;color:#2a3c37">${titre}</td>
+          <td style="text-align:right;font-family:'Kanit',Arial,sans-serif;font-size:13px;font-weight:700;color:${couleur(s.note)}">${s.note ?? "n/a"}/100</td>
+        </tr>
+      </table>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-top:10px;border:1px solid #eef1ef;border-radius:10px;overflow:hidden">
+        ${(s.facteurs || []).map(ligne).join("")}
+      </table>
+    </td></tr>`;
+
+  const html = `<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>@import url('https://fonts.googleapis.com/css2?family=Kanit:wght@400;500;600;700&display=swap');</style></head>
+<body style="margin:0;padding:0;background:#e9ede9;">
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:#e9ede9">Votre note de potentiel Foncimo pour ${adresse} est prête — découvrez le détail du calcul.</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#e9ede9;padding:28px 12px">
+  <tr><td align="center">
+    <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:600px;max-width:600px;background:#ffffff;border-radius:18px;overflow:hidden;box-shadow:0 8px 30px rgba(20,28,25,.12)">
+
+      <!-- Header -->
+      <tr><td style="background:#2a3c37;padding:30px 30px 26px">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+          <td style="font-family:'Kanit',Arial,sans-serif;font-size:26px;font-weight:700;color:#d3de79;letter-spacing:-.01em">foncimo</td>
+          <td style="text-align:right;font-family:'Kanit',Arial,sans-serif;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#9fb0a7">Expertise immobilière</td>
+        </tr></table>
+        <div style="height:1px;background:rgba(211,222,121,.3);margin:20px 0"></div>
+        <div style="font-family:'Kanit',Arial,sans-serif;font-size:21px;font-weight:600;color:#ffffff;line-height:1.3">Le potentiel de votre parcelle</div>
+        <div style="font-family:'Kanit',Arial,sans-serif;font-size:14px;color:#c7d2cb;margin-top:4px">${adresse}${parc.commune ? " · " + parc.commune : ""}${surf ? " · " + surf : ""}${zone ? " · " + zone : ""}</div>
+      </td></tr>
+
+      <!-- Score cards -->
+      <tr><td style="padding:26px 24px 6px">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+          ${carteScore("Potentiel de densification", dens)}
+          ${carteScore("Valorisation (indicatif)", valo)}
+        </tr></table>
+      </td></tr>
+
+      <!-- Intro -->
+      <tr><td style="padding:14px 30px 0;font-family:'Kanit',Arial,sans-serif;font-size:14px;color:#51605a;line-height:1.6">
+        Bonjour,<br>voici le détail du calcul de la note de potentiel établie pour votre bien.
+      </td></tr>
+
+      ${bloc("Détail : densification", dens)}
+      ${bloc("Détail : valorisation", valo)}
+
+      <!-- Callout -->
+      <tr><td style="padding:26px 30px 0">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6ec;border-left:4px solid #d3de79;border-radius:8px">
+          <tr><td style="padding:18px 20px;font-family:'Kanit',Arial,sans-serif;font-size:14px;color:#3a463f;line-height:1.6">
+            Ces notes sont des <strong>indicateurs automatiques</strong>. L'analyse réelle (droits à bâtir exacts, faisabilité, valorisation) demande une expertise. <strong style="color:#2a3c37">Prenons rendez-vous :</strong> au bureau à Pully, ou je me déplace chez vous.
+          </td></tr>
+        </table>
+      </td></tr>
+
+      <!-- CTA -->
+      <tr><td align="center" style="padding:26px 30px 32px">
+        <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto"><tr>
+          <td align="center" bgcolor="#d3de79" style="border-radius:9px">
+            <a href="${RDV_URL}" style="display:inline-block;padding:15px 36px;font-family:'Kanit',Arial,sans-serif;font-size:15px;font-weight:700;color:#233029;text-decoration:none;border-radius:9px">Prendre rendez-vous →</a>
+          </td>
+        </tr></table>
+      </td></tr>
+
+      <!-- Footer -->
+      <tr><td style="background:#233029;padding:24px 30px">
+        <div style="font-family:'Kanit',Arial,sans-serif;font-size:15px;font-weight:700;color:#d3de79">foncimo</div>
+        <div style="font-family:'Kanit',Arial,sans-serif;font-size:12px;color:#8b9a90;margin-top:4px">Foncimo SA · Pilotage de projet & expertise immobilière · Pully (VD)</div>
+        <div style="font-family:'Kanit',Arial,sans-serif;font-size:11px;color:#5f6e66;margin-top:10px">Vous recevez cet email car vous avez demandé le détail de votre note de potentiel sur foncimo.ch.</div>
+      </td></tr>
+
+    </table>
+  </td></tr>
+</table>
+</body></html>`;
   try {
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ from: MAIL_FROM, to: [to], subject: `Foncimo — potentiel de ${adresse}`, html }),
+      body: JSON.stringify({ from: MAIL_FROM, to: [to], subject: `Foncimo : potentiel de ${adresse}`, html }),
     });
     return res.ok;
   } catch (_e) {

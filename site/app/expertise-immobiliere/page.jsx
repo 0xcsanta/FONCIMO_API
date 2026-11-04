@@ -1,7 +1,7 @@
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
 
-export const metadata = { title: "Expertise immobilière — Foncimo" };
+export const metadata = { title: "Expertise immobilière - Foncimo" };
 
 export default function ExpertisePage() {
   return (

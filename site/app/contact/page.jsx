@@ -1,7 +1,7 @@
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
 
-export const metadata = { title: "Contact — Foncimo" };
+export const metadata = { title: "Contact - Foncimo" };
 
 export default function ContactPage() {
   return (
@@ -46,7 +46,7 @@ export default function ContactPage() {
               </div>
               <div>
                 <strong>Adresse</strong>
-                Pully, Vaud — Suisse romande
+                Pully, Vaud, Suisse romande
               </div>
               <div>
                 <strong>E-mail</strong>

@@ -3,7 +3,7 @@
 export const SUPABASE_URL =
   process.env.NEXT_PUBLIC_SUPABASE_URL || "https://gwwioyvhhtskoasvsigc.supabase.co";
 
-// Clé anon (JWT) — requise par le gateway des edge functions (verify_jwt).
+// Clé anon (JWT), requise par le gateway des edge functions (verify_jwt).
 export const SUPABASE_ANON =
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd3d2lveXZoaHRza29hc3ZzaWdjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTM2OTI3OTEsImV4cCI6MjEwOTI2ODc5MX0.DCg9xQP7hEhOp_gIdnNCvWQ6K2ZM3WNfp0OWh1HCNJk";
