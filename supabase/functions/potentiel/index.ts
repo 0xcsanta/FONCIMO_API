@@ -1,14 +1,9 @@
 // =====================================================================
 //  Edge Function : potentiel
-//  Deux actions :
-//    - "evaluer"  : cherche une parcelle (n° ou adresse, Pully), calcule
-//                   les deux notes (densification + valorisation) et renvoie
-//                   la carte. Le DETAIL du calcul est masque (teaser).
-//    - "capturer" : enregistre le lead (email), renvoie le detail complet
-//                   et envoie l'email Foncimo (via Resend).
-//
-//  Le scoring et la cle service restent cote serveur : rien n'est expose
-//  au navigateur avant la capture de l'email.
+//    - "suggest"  : autocompletion d'adresses (Pully)
+//    - "evaluer"  : cherche une parcelle, calcule la note, renvoie la carte
+//                   (detail du calcul masque = teaser)
+//    - "capturer" : enregistre le lead, renvoie le detail, envoie l'email
 // =====================================================================
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
@@ -24,9 +19,10 @@ const cors = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Content-Type": "application/json",
 };
+const json = (o: unknown, status = 200) =>
+  new Response(JSON.stringify(o), { status, headers: cors });
 
 // --------------------------- SCORING ---------------------------------
-// Taux d'occupation du sol de reference (proxy, faute d'indice legal en base)
 const REF_TAUX: Record<string, number> = {
   "Zones centrales": 0.80,
   "Zones d'habitation": 0.40,
@@ -126,7 +122,7 @@ function scoreDensification(d: Record<string, unknown>) {
   const logts = num(d.nb_logements) ?? 0;
   const annee = num(d.annee_min);
   let ptsRenouv = 7;
-  const densLog = surface ? logts / (surface / 1000) : 0; // logements / 1000 m2
+  const densLog = surface ? logts / (surface / 1000) : 0;
   if (densLog < 3) ptsRenouv += 5; else if (densLog < 6) ptsRenouv += 2;
   if (annee !== null && annee < 1960) ptsRenouv += 3; else if (annee !== null && annee < 1980) ptsRenouv += 1;
   ptsRenouv = Math.min(15, ptsRenouv);
@@ -140,12 +136,11 @@ function scoreDensification(d: Record<string, unknown>) {
 }
 
 function scoreValorisation(d: Record<string, unknown>) {
+  // Toujours calcule (stocke dans le lead), mais plus affiche.
   const zone = d.zone_affectation ? String(d.zone_affectation) : null;
   const facteurs: Facteur[] = [];
-
   const ptsZone = zone && ZONE_PREMIUM[zone] !== undefined ? ZONE_PREMIUM[zone] : 6;
   facteurs.push({ cle: "zone", label: "Attractivité de la zone", valeur: zone ?? "indéterminée", points: ptsZone });
-
   let ptsEnv = 20;
   const pente = num(d.pente_pct);
   if (pente !== null && pente > 30) ptsEnv -= 6; else if (pente !== null && pente > 15) ptsEnv -= 3;
@@ -153,137 +148,111 @@ function scoreValorisation(d: Record<string, unknown>) {
   if (bruit.includes("IV")) ptsEnv -= 8; else if (bruit.includes("III")) ptsEnv -= 4;
   if (d.en_zone_archeologique) ptsEnv -= 3;
   ptsEnv = Math.max(0, ptsEnv);
-  facteurs.push({ cle: "environnement", label: "Cadre & nuisances", valeur: `pente ${pente ?? "?"}%${bruit ? ", bruit " + bruit : ""}`, points: ptsEnv });
-
+  facteurs.push({ cle: "environnement", label: "Cadre & nuisances", valeur: `pente ${pente ?? "?"}%`, points: ptsEnv });
   const logts = num(d.nb_logements) ?? 0;
   const bat = num(d.nb_batiments) ?? 0;
-  let ptsBati = 8 + Math.min(12, logts * 2 + bat);
-  ptsBati = Math.min(20, ptsBati);
+  const ptsBati = Math.min(20, 8 + Math.min(12, logts * 2 + bat));
   facteurs.push({ cle: "bati", label: "Valeur du bâti existant", valeur: `${bat} bâtiment(s), ${logts} logt(s)`, points: ptsBati });
-
   const surface = num(d.surface_m2);
   const ptsTaille = Math.round(15 * tailleNorm(surface));
   facteurs.push({ cle: "taille", label: "Taille de la parcelle", valeur: `${surface ? Math.round(surface) : "?"} m²`, points: ptsTaille });
-
   const ref = zone ? REF_TAUX[zone] : undefined;
   const tocc = num(d.taux_occupation_sol);
   let ptsResid = 0;
-  if (ref !== undefined) {
-    const toccEff = tocc ?? ref * 0.6;
-    ptsResid = Math.round(20 * clamp((ref - toccEff) / ref, 0, 1));
-  }
+  if (ref !== undefined) { const toccEff = tocc ?? ref * 0.6; ptsResid = Math.round(20 * clamp((ref - toccEff) / ref, 0, 1)); }
   facteurs.push({ cle: "residuel", label: "Droits à bâtir résiduels", valeur: ref !== undefined ? "estimés" : "n/a", points: ptsResid });
-
-  // Ajustement patrimoine : le cachet peut valoriser, la lourde protection pénalise
   const rec = num(d.note_recensement);
   let ptsPat = 0;
   if (rec === 3 || rec === 4) ptsPat = 3; else if (rec !== null && rec <= 2) ptsPat = -5;
   if (ptsPat !== 0) facteurs.push({ cle: "patrimoine", label: "Cachet patrimonial", valeur: `recensement ${rec}`, points: ptsPat });
-
   const note = Math.round(clamp(ptsZone + ptsEnv + ptsBati + ptsTaille + ptsResid + ptsPat, 0, 100));
   return { note, label: labelFor(note), constructible: ref !== undefined, facteurs };
 }
 
-// --------------------------- EMAIL -----------------------------------
-async function envoyerEmail(to: string, parc: Record<string, unknown>, dens: any, valo: any): Promise<boolean> {
+// --------------------------- EMAIL (une seule note) ------------------
+const couleur = (n: number | null | undefined) =>
+  n === null || n === undefined ? "#9aa5a0" : n >= 75 ? "#6f9c2f" : n >= 50 ? "#b79a1f" : n >= 25 ? "#c47a2b" : "#b4341f";
+
+async function envoyerEmail(to: string, parc: Record<string, unknown>, s: any): Promise<boolean> {
   if (!RESEND_API_KEY) return false;
-  const couleur = (n: number | null | undefined) =>
-    n === null || n === undefined ? "#9aa5a0" : n >= 75 ? "#6f9c2f" : n >= 50 ? "#b79a1f" : n >= 25 ? "#c47a2b" : "#b4341f";
+  const c = couleur(s.note);
   const adresse = parc.adresse ? String(parc.adresse) : `parcelle n°${parc.numero}`;
   const surf = parc.surface_m2 ? Math.round(Number(parc.surface_m2)) + " m²" : "";
   const zone = parc.zone_affectation ? String(parc.zone_affectation) : "";
+  const meta = [parc.commune, surf, zone].filter(Boolean).join(" · ");
+  const F = "'Kanit',-apple-system,'Segoe UI',Arial,sans-serif";
 
   const ligne = (f: Facteur, i: number) => {
     const bg = i % 2 ? "#fafbf9" : "#ffffff";
     return `<tr>
-      <td style="padding:11px 16px;font-family:'Kanit',Arial,sans-serif;font-size:13px;color:#51605a;background:${bg};border-top:1px solid #eef1ef">${f.label}</td>
-      <td style="padding:11px 16px;font-family:'Kanit',Arial,sans-serif;font-size:13px;color:#1d2622;text-align:right;background:${bg};border-top:1px solid #eef1ef">${f.valeur}</td>
-      <td style="padding:11px 16px;font-family:'Kanit',Arial,sans-serif;font-size:13px;font-weight:700;text-align:right;color:${f.points < 0 ? "#b4341f" : "#2a3c37"};background:${bg};border-top:1px solid #eef1ef">${f.points > 0 ? "+" : ""}${f.points}</td>
+      <td style="padding:13px 20px;font-family:${F};font-size:14px;color:#51605a;background:${bg};border-top:1px solid #eef1ef">${f.label}</td>
+      <td style="padding:13px 14px;font-family:${F};font-size:13px;color:#8a948f;text-align:right;white-space:nowrap;background:${bg};border-top:1px solid #eef1ef">${f.valeur}</td>
+      <td style="padding:13px 20px 13px 10px;font-family:${F};font-size:14px;font-weight:700;text-align:right;color:${f.points < 0 ? "#b4341f" : "#2a3c37"};background:${bg};border-top:1px solid #eef1ef">${f.points > 0 ? "+" : ""}${f.points}</td>
     </tr>`;
   };
-
-  const carteScore = (titre: string, s: any) => `
-    <td width="50%" valign="top" style="padding:0 6px">
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:separate;background:#ffffff;border:1px solid #e7ebe8;border-radius:14px">
-        <tr><td align="center" style="padding:22px 12px">
-          <div style="font-family:'Kanit',Arial,sans-serif;font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:#93a09a">${titre}</div>
-          <div style="font-family:'Kanit',Georgia,serif;font-size:46px;font-weight:700;line-height:1.05;color:${couleur(s.note)};margin:8px 0 6px">${s.note ?? "n/a"}<span style="font-size:15px;color:#b9c2bc">/100</span></div>
-          <span style="display:inline-block;font-family:'Kanit',Arial,sans-serif;font-size:11px;font-weight:700;letter-spacing:.02em;color:${couleur(s.note)};background:#f2f5ea;padding:5px 14px;border-radius:30px">${s.label}</span>
-        </td></tr>
-      </table>
-    </td>`;
-
-  const bloc = (titre: string, s: any) => `
-    <tr><td style="padding:24px 30px 0">
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
-        <tr>
-          <td style="font-family:'Kanit',Arial,sans-serif;font-size:15px;font-weight:700;color:#2a3c37">${titre}</td>
-          <td style="text-align:right;font-family:'Kanit',Arial,sans-serif;font-size:13px;font-weight:700;color:${couleur(s.note)}">${s.note ?? "n/a"}/100</td>
-        </tr>
-      </table>
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-top:10px;border:1px solid #eef1ef;border-radius:10px;overflow:hidden">
-        ${(s.facteurs || []).map(ligne).join("")}
-      </table>
-    </td></tr>`;
 
   const html = `<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>@import url('https://fonts.googleapis.com/css2?family=Kanit:wght@400;500;600;700&display=swap');</style></head>
 <body style="margin:0;padding:0;background:#e9ede9;">
-<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:#e9ede9">Votre note de potentiel Foncimo pour ${adresse} est prête — découvrez le détail du calcul.</div>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#e9ede9;padding:28px 12px">
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:#e9ede9">Votre note de potentiel Foncimo pour ${adresse} : ${s.note ?? "n/a"}/100.</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#e9ede9;padding:30px 12px">
   <tr><td align="center">
-    <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:600px;max-width:600px;background:#ffffff;border-radius:18px;overflow:hidden;box-shadow:0 8px 30px rgba(20,28,25,.12)">
+    <table role="presentation" width="580" cellpadding="0" cellspacing="0" style="width:580px;max-width:580px;background:#ffffff;border-radius:18px;overflow:hidden;box-shadow:0 10px 34px rgba(20,28,25,.14)">
 
       <!-- Header -->
-      <tr><td style="background:#2a3c37;padding:30px 30px 26px">
+      <tr><td style="background:#2a3c37;padding:32px 34px 28px">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
-          <td style="font-family:'Kanit',Arial,sans-serif;font-size:26px;font-weight:700;color:#d3de79;letter-spacing:-.01em">foncimo</td>
-          <td style="text-align:right;font-family:'Kanit',Arial,sans-serif;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#9fb0a7">Expertise immobilière</td>
+          <td style="font-family:${F};font-size:27px;font-weight:700;color:#d3de79;letter-spacing:-.01em">foncimo</td>
+          <td style="text-align:right;font-family:${F};font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:#9fb0a7">Expertise immobilière</td>
         </tr></table>
-        <div style="height:1px;background:rgba(211,222,121,.3);margin:20px 0"></div>
-        <div style="font-family:'Kanit',Arial,sans-serif;font-size:21px;font-weight:600;color:#ffffff;line-height:1.3">Le potentiel de votre parcelle</div>
-        <div style="font-family:'Kanit',Arial,sans-serif;font-size:14px;color:#c7d2cb;margin-top:4px">${adresse}${parc.commune ? " · " + parc.commune : ""}${surf ? " · " + surf : ""}${zone ? " · " + zone : ""}</div>
+        <div style="height:1px;background:rgba(211,222,121,.28);margin:22px 0"></div>
+        <div style="font-family:${F};font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:#9fb0a7">Note de potentiel</div>
+        <div style="font-family:${F};font-size:22px;font-weight:600;color:#ffffff;line-height:1.3;margin-top:3px">${adresse}</div>
+        <div style="font-family:${F};font-size:13px;color:#c0ccc4;margin-top:4px">${meta}</div>
       </td></tr>
 
-      <!-- Score cards -->
-      <tr><td style="padding:26px 24px 6px">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
-          ${carteScore("Potentiel de densification", dens)}
-          ${carteScore("Valorisation (indicatif)", valo)}
-        </tr></table>
+      <!-- Score hero -->
+      <tr><td align="center" style="padding:34px 34px 10px">
+        <div style="font-family:${F};font-size:68px;font-weight:700;line-height:1;color:${c}">${s.note ?? "n/a"}<span style="font-size:22px;color:#b9c2bc;font-weight:500">/100</span></div>
+        <div style="margin-top:12px"><span style="display:inline-block;font-family:${F};font-size:13px;font-weight:700;color:${c};background:#f2f5ea;padding:7px 20px;border-radius:30px">${s.label}</span></div>
       </td></tr>
 
       <!-- Intro -->
-      <tr><td style="padding:14px 30px 0;font-family:'Kanit',Arial,sans-serif;font-size:14px;color:#51605a;line-height:1.6">
+      <tr><td style="padding:22px 34px 0;font-family:${F};font-size:15px;color:#51605a;line-height:1.65">
         Bonjour,<br>voici le détail du calcul de la note de potentiel établie pour votre bien.
       </td></tr>
 
-      ${bloc("Détail : densification", dens)}
-      ${bloc("Détail : valorisation", valo)}
+      <!-- Detail -->
+      <tr><td style="padding:22px 34px 0">
+        <div style="font-family:${F};font-size:13px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#93a09a;margin-bottom:10px">Détail du calcul</div>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;border:1px solid #eef1ef;border-radius:12px;overflow:hidden">
+          ${(s.facteurs || []).map(ligne).join("")}
+        </table>
+      </td></tr>
 
       <!-- Callout -->
-      <tr><td style="padding:26px 30px 0">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6ec;border-left:4px solid #d3de79;border-radius:8px">
-          <tr><td style="padding:18px 20px;font-family:'Kanit',Arial,sans-serif;font-size:14px;color:#3a463f;line-height:1.6">
-            Ces notes sont des <strong>indicateurs automatiques</strong>. L'analyse réelle (droits à bâtir exacts, faisabilité, valorisation) demande une expertise. <strong style="color:#2a3c37">Prenons rendez-vous :</strong> au bureau à Pully, ou je me déplace chez vous.
+      <tr><td style="padding:24px 34px 0">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6ec;border-left:4px solid #d3de79;border-radius:10px">
+          <tr><td style="padding:18px 22px;font-family:${F};font-size:14px;color:#3a463f;line-height:1.65">
+            Cette note est un <strong>indicateur automatique</strong>. L'analyse réelle (droits à bâtir exacts, faisabilité, valorisation) demande une expertise. <strong style="color:#2a3c37">Prenons rendez-vous :</strong> au bureau à Pully, ou je me déplace chez vous.
           </td></tr>
         </table>
       </td></tr>
 
       <!-- CTA -->
-      <tr><td align="center" style="padding:26px 30px 32px">
+      <tr><td align="center" style="padding:28px 34px 34px">
         <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto"><tr>
-          <td align="center" bgcolor="#d3de79" style="border-radius:9px">
-            <a href="${RDV_URL}" style="display:inline-block;padding:15px 36px;font-family:'Kanit',Arial,sans-serif;font-size:15px;font-weight:700;color:#233029;text-decoration:none;border-radius:9px">Prendre rendez-vous →</a>
+          <td align="center" bgcolor="#d3de79" style="border-radius:10px">
+            <a href="${RDV_URL}" style="display:inline-block;padding:16px 40px;font-family:${F};font-size:15px;font-weight:700;color:#233029;text-decoration:none;border-radius:10px">Prendre rendez-vous →</a>
           </td>
         </tr></table>
       </td></tr>
 
       <!-- Footer -->
-      <tr><td style="background:#233029;padding:24px 30px">
-        <div style="font-family:'Kanit',Arial,sans-serif;font-size:15px;font-weight:700;color:#d3de79">foncimo</div>
-        <div style="font-family:'Kanit',Arial,sans-serif;font-size:12px;color:#8b9a90;margin-top:4px">Foncimo SA · Pilotage de projet & expertise immobilière · Pully (VD)</div>
-        <div style="font-family:'Kanit',Arial,sans-serif;font-size:11px;color:#5f6e66;margin-top:10px">Vous recevez cet email car vous avez demandé le détail de votre note de potentiel sur foncimo.ch.</div>
+      <tr><td style="background:#233029;padding:26px 34px">
+        <div style="font-family:${F};font-size:16px;font-weight:700;color:#d3de79">foncimo</div>
+        <div style="font-family:${F};font-size:12px;color:#8b9a90;margin-top:5px">Foncimo SA · Pilotage de projet & expertise immobilière · Pully (VD)</div>
+        <div style="font-family:${F};font-size:11px;color:#5f6e66;margin-top:12px">Vous recevez cet email car vous avez demandé le détail de votre note de potentiel sur foncimo.ch.</div>
       </td></tr>
 
     </table>
@@ -305,19 +274,27 @@ async function envoyerEmail(to: string, parc: Record<string, unknown>, dens: any
 // --------------------------- HANDLER ---------------------------------
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
-  if (req.method !== "POST") return new Response(JSON.stringify({ error: "POST only" }), { status: 405, headers: cors });
+  if (req.method !== "POST") return json({ error: "POST only" }, 405);
 
   const supa = createClient(SUPABASE_URL, SERVICE_ROLE);
   let body: any;
-  try { body = await req.json(); } catch { return new Response(JSON.stringify({ error: "JSON invalide" }), { status: 400, headers: cors }); }
+  try { body = await req.json(); } catch { return json({ error: "JSON invalide" }, 400); }
 
-  const action = body.action === "capturer" ? "capturer" : "evaluer";
+  const rawAction = body.action;
   const query = String(body.query ?? "").trim();
   const type = ["numero", "adresse", "auto"].includes(body.type) ? body.type : "auto";
 
-  if (!query && action === "evaluer") return new Response(JSON.stringify({ error: "Requête vide" }), { status: 400, headers: cors });
+  // --- Autocompletion d'adresses ---
+  if (rawAction === "suggest") {
+    if (query.length < 2) return json({ suggestions: [] });
+    const { data } = await supa.rpc("suggest_adresses", { p_q: query });
+    return json({ suggestions: data ?? [] });
+  }
 
-  // Recupere la parcelle (par la requete, ou par egrid pour la capture)
+  const action = rawAction === "capturer" ? "capturer" : "evaluer";
+  if (!query && action === "evaluer" && !body.egrid) return json({ error: "Requête vide" }, 400);
+
+  // Recupere la parcelle (par egrid si fourni, sinon par la requete)
   let parc: any = null;
   if (body.egrid) {
     const { data } = await supa.rpc("get_parcelle_data", { p_query: String(body.egrid), p_type: "egrid" });
@@ -325,16 +302,16 @@ Deno.serve(async (req) => {
   }
   if (!parc) {
     const { data, error } = await supa.rpc("get_parcelle_data", { p_query: query, p_type: type });
-    if (error) return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: cors });
+    if (error) return json({ error: error.message }, 500);
     parc = data;
   }
 
   if (!parc || !parc.found) {
-    return new Response(JSON.stringify({ found: false, message: "Parcelle introuvable à Pully. Essayez un numéro cadastral ou une adresse de Pully." }), { headers: cors });
+    return json({ found: false, message: "Parcelle introuvable à Pully. Essayez un numéro cadastral ou une adresse de Pully." });
   }
 
   const dens = scoreDensification(parc);
-  const valo = scoreValorisation(parc);
+  const valo = scoreValorisation(parc); // calcule mais non affiche
 
   const carte = { centroid: parc.centroid, geojson: parc.geojson };
   const resume = {
@@ -343,18 +320,15 @@ Deno.serve(async (req) => {
   };
 
   if (action === "evaluer") {
-    // TEASER : notes visibles, detail masque (seuls les libelles des facteurs)
-    const masque = (s: any) => ({ note: s.note, label: s.label, constructible: s.constructible, facteurs: (s.facteurs || []).map((f: Facteur) => ({ label: f.label })) });
-    return new Response(JSON.stringify({ found: true, resume, carte, densification: masque(dens), valorisation: masque(valo) }), { headers: cors });
+    const masque = { note: dens.note, label: dens.label, constructible: dens.constructible, facteurs: (dens.facteurs || []).map((f: Facteur) => ({ label: f.label })) };
+    return json({ found: true, resume, carte, potentiel: masque });
   }
 
   // action "capturer"
   const email = String(body.email ?? "").trim();
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))
-    return new Response(JSON.stringify({ error: "Email invalide" }), { status: 400, headers: cors });
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return json({ error: "Email invalide" }, 400);
 
-  const detail = { densification: dens, valorisation: valo };
-  const emailOk = await envoyerEmail(email, parc, dens, valo);
+  const emailOk = await envoyerEmail(email, parc, dens);
 
   await supa.from("lead").insert({
     email,
@@ -366,10 +340,10 @@ Deno.serve(async (req) => {
     label_densification: dens.label,
     note_valorisation: valo.note,
     label_valorisation: valo.label,
-    detail_calcul: detail,
+    detail_calcul: { densification: dens, valorisation: valo },
     email_envoye: emailOk,
     rdv_demande: body.rdv === true,
   });
 
-  return new Response(JSON.stringify({ found: true, resume, carte, densification: dens, valorisation: valo, email_envoye: emailOk }), { headers: cors });
+  return json({ found: true, resume, carte, potentiel: dens, email_envoye: emailOk });
 });

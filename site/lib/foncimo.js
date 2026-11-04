@@ -34,11 +34,22 @@ async function callFn(payload) {
 }
 
 // Étape 1 : évaluer une parcelle (détail masqué / teaser).
-export function evaluerParcelle(query, type = "auto") {
-  return callFn({ action: "evaluer", query, type });
+export function evaluerParcelle(query, type = "auto", egrid) {
+  return callFn({ action: "evaluer", query, type, egrid });
 }
 
 // Étape 2 : capturer l'email, révéler le détail, déclencher l'email Foncimo.
 export function capturerLead({ query, type = "auto", egrid, email, rdv }) {
   return callFn({ action: "capturer", query, type, egrid, email, rdv });
+}
+
+// Autocomplétion : adresses de Pully correspondant à la saisie.
+export async function suggererAdresses(query) {
+  if (!query || query.trim().length < 2) return [];
+  try {
+    const res = await callFn({ action: "suggest", query });
+    return (res && res.suggestions) || [];
+  } catch (e) {
+    return [];
+  }
 }
