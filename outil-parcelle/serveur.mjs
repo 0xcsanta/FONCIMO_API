@@ -35,8 +35,8 @@ const pool = new pg.Pool({ connectionString, ssl: { rejectUnauthorized: false } 
 //  SCORING  —  3 strategies independantes, note = la meilleure
 //  (tweake librement les constantes ci-dessous)
 // =====================================================================
-const LAMBDA = 350;        // m2 de surface de plancher = "impressionnant"
-const GEL_MULT_DEFAUT = 0.2; // multiplicateur zone reservee (gel). 1 = "hors gel"
+const LAMBDA = 300;        // m2 de surface de plancher = "impressionnant" (plus bas = notes plus genereuses)
+const GEL_MULT_DEFAUT = 0.6; // multiplicateur zone reservee (gel). 1 = "hors gel"
 
 const num = (x) => (x === null || x === undefined || x === "" ? null : Number(x));
 const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
@@ -84,14 +84,14 @@ function calcule(r, gelMult = GEL_MULT_DEFAUT) {
   // 2) SURELEVATION (ajouter des etages sur l'emprise existante)
   const dN = Nmax != null ? Math.max(0, Nmax - Nact) : 0;
   const dspElev = Fexist * dN;
-  let fElev = 0.80 * cPente * cGlobal;
+  let fElev = 0.85 * cPente * cGlobal;
   if (rec != null) fElev *= rec <= 2 ? 0.1 : rec === 3 ? 0.4 : rec === 4 ? 0.7 : 1;
   if (annee != null) fElev *= annee < 1940 ? 0.6 : annee < 1980 ? 0.85 : 1;
   const sElev = Math.round(100 * fElev * ampleur(dspElev));
 
   // 3) DEMOLITION-RECONSTRUCTION (raser et rebatir au max)
   const dspDemo = SPmax != null ? Math.max(0, SPmax - SPexist) : 0;
-  const baseDemo = nue ? 0.95 : 0.70;
+  const baseDemo = nue ? 0.95 : 0.80;
   let cPat = 1;
   if (r.site_protege) cPat = 0;
   if (rec != null) { if (rec <= 3) cPat = 0; else if (rec === 4) cPat = 0.4; }
@@ -212,7 +212,7 @@ const PAGE = `<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta n
   <div class="search">
     <input id="num" placeholder="N° de parcelle (ex: 365)" autofocus>
     <button onclick="go()">Analyser</button>
-    <label class="toggle"><input type="checkbox" id="gel" checked> appliquer le gel (zone réservée ×0.2)</label>
+    <label class="toggle"><input type="checkbox" id="gel" checked> appliquer le gel (zone réservée ×0.6)</label>
   </div>
   <div class="hint">Astuce : 365 (fort), 118 (fort, nue), 3551 (gelée), 701 (hors périmètre).</div>
   <div id="out"></div>
@@ -239,7 +239,7 @@ function render(d){
     const best = s.cle===d.best.cle;
     return '<div class="card'+(best?' best':'')+'"><h3>'+s.nom+(best?'<span class="badge">meilleure</span>':'')+'</h3>'
       +'<div class="sp">'+s.detail+'</div>'
-      +'<div class="sc">'+s.score+'<span style="font-size:16px;color:#b9c2bc">/100</span></div>'
+      +'<div class="sc">'+(s.score/10).toFixed(1)+'<span style="font-size:16px;color:#b9c2bc">/10</span></div>'
       +'<div class="sp">+'+s.dsp+' m² de plancher</div>'
       +'<div class="f">faisabilité '+Math.round(s.f*100)+'%</div></div>';
   }).join('');
@@ -257,7 +257,7 @@ function render(d){
     ['Contraintes', [i.limite&&'alignement', i.archeo&&'archéo', i.site_protege&&'site protégé', i.bruit].filter(Boolean).join(', ')||'—'],
   ].map(r=>'<tr><td>'+r[0]+'</td><td>'+r[1]+'</td></tr>').join('');
   $('out').innerHTML =
-    '<div class="final"><div class="num" style="color:'+coul(d.note)+'">'+d.note+'</div>'
+    '<div class="final"><div class="num" style="color:'+coul(d.note)+'">'+(d.note/10).toFixed(1)+'<span style="font-size:22px;color:#b9c2bc;font-weight:600">/10</span></div>'
     +'<div><div class="voie">'+d.label+'</div><div class="meta">Parcelle '+d.numero+' · meilleure voie : <b>'+d.best.nom+'</b></div></div></div>'
     +'<h2>Les 3 stratégies</h2><div class="cards">'+cards+'</div>'
     +'<h2>Chiffres utilisés</h2><table>'+rows+'</table>';
