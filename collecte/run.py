@@ -11,7 +11,8 @@ Usage :
 import sys
 
 from . import db, config
-from .sources import geo_admin, cadastre, zones as zones_src, recensement, oereb, pente
+from .sources import (geo_admin, cadastre, zones as zones_src, recensement,
+                      oereb, pente, patrimoine_vd)
 
 # Windows : forcer l'UTF-8 sur la sortie pour éviter les erreurs d'encodage.
 try:
@@ -70,6 +71,12 @@ def main(declencheur="bouton"):
         pentes = pente.fetch_pentes(db.centroides_parcelles(conn))
         db.update_pentes_parcelle(conn, pentes)
         print(f"  {len(pentes)} pentes calculées.")
+
+        # --- 7b. Contraintes patrimoine VD (archéologie, jardins, sites) ---
+        print("-> Patrimoine VD (archéologie, jardins, sites)...")
+        patr = patrimoine_vd.fetch_patrimoine(db.centroides_parcelles(conn))
+        db.update_patrimoine_parcelle(conn, patr)
+        print(f"  {len(patr)} parcelles traitées (patrimoine).")
 
         # --- 8. Règles de constructibilité (règlement communal RCATC) ---
         print("-> Application du règlement de Pully (indice, hauteur, niveaux)...")

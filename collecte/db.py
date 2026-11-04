@@ -296,6 +296,22 @@ def update_pentes_parcelle(conn, pentes):
     return len(pentes)
 
 
+def update_patrimoine_parcelle(conn, patrimoine):
+    """patrimoine : {egrid: {archeo, jardin, site}} (contraintes VD)."""
+    if not patrimoine:
+        return 0
+    with conn.cursor() as cur:
+        for egrid, info in patrimoine.items():
+            cur.execute(
+                "update parcelle set en_zone_archeologique=%s, zone_archeologique=%s, "
+                "jardin_historique=%s, site_protege=%s where egrid=%s",
+                (info["archeo"] is not None, info["archeo"],
+                 info["jardin"], info["site"], egrid),
+            )
+    conn.commit()
+    return len(patrimoine)
+
+
 # ---------------------------------------------------------------------
 # Règles de constructibilité — règlement communal de Pully (RCATC,
 # en vigueur le 03.11.2017)
