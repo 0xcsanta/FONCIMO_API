@@ -1,5 +1,6 @@
 import { Kanit } from "next/font/google";
 import "./globals.css";
+import PotentielLauncher from "@/components/PotentielLauncher";
 
 const kanit = Kanit({
   subsets: ["latin"],
@@ -17,7 +18,10 @@ export const metadata = {
 export default function RootLayout({ children }) {
   return (
     <html lang="fr" className={kanit.variable}>
-      <body>{children}</body>
+      <body>
+        {children}
+        <PotentielLauncher />
+      </body>
     </html>
   );
 }
