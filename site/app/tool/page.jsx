@@ -1,11 +1,11 @@
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
-import PotentielCalculator from "@/components/PotentielCalculator";
+import AnalyseurPotentiel from "@/components/AnalyseurPotentiel";
 
 export const metadata = {
-  title: "Évaluez le potentiel de votre parcelle - Foncimo",
+  title: "Analyse de potentiel d'une parcelle - Foncimo",
   description:
-    "Outil gratuit Foncimo : obtenez la note de potentiel de densification d'une parcelle à Pully (VD) en 30 secondes, à partir de son numéro ou de son adresse.",
+    "Outil d'analyse Foncimo : potentiel de densification d'une parcelle à Pully selon 3 stratégies (agrandissement, surélévation, démolition-reconstruction), avec pondération ajustable.",
 };
 
 export default function ToolPage() {
@@ -15,21 +15,20 @@ export default function ToolPage() {
       <main>
         <section className="page-hero">
           <div className="container">
-            <span className="eyebrow">Outil gratuit</span>
-            <h1>Évaluez le potentiel de votre parcelle</h1>
+            <span className="eyebrow">Outil d'analyse</span>
+            <h1>Potentiel de valorisation d'une parcelle</h1>
             <p className="page-hero-lead">
-              Entrez un numéro de parcelle ou une adresse à Pully : notre
-              algorithme croise zones, droits à bâtir, patrimoine et terrain
-              pour estimer son potentiel de densification.
+              Trois stratégies évaluées indépendamment — agrandissement au sol,
+              surélévation, démolition-reconstruction — à partir des données
+              cadastrales et réglementaires de Pully. La note affichée est celle
+              de la meilleure voie. Chaque facteur est pondérable.
             </p>
           </div>
         </section>
 
         <section className="section">
           <div className="container">
-            <div className="tool-card modal">
-              <PotentielCalculator autoFocusInput={false} />
-            </div>
+            <AnalyseurPotentiel />
           </div>
         </section>
       </main>

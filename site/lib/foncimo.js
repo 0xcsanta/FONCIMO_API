@@ -53,3 +53,32 @@ export async function suggererAdresses(query) {
     return [];
   }
 }
+
+// ---- Outil /tool : modèle pondéré 3 stratégies (edge function "analyse") ----
+const ANALYSE_URL = `${SUPABASE_URL}/functions/v1/analyse`;
+
+async function callAnalyse(payload) {
+  const res = await fetch(ANALYSE_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${SUPABASE_ANON}`,
+      apikey: SUPABASE_ANON,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  let data = null;
+  try { data = await res.json(); } catch (e) { data = null; }
+  if (!res.ok) throw new Error((data && (data.error || data.message)) || `Erreur ${res.status}`);
+  return data;
+}
+
+// Grille de poids par défaut + libellés + sources.
+export function poidsDefaut() {
+  return callAnalyse({ action: "defauts" });
+}
+
+// Analyse une parcelle avec les poids fournis (ou défauts si omis).
+export function analyserParcelle({ query, type = "auto", egrid, poids, gel = true }) {
+  return callAnalyse({ action: "analyse", query, type, egrid, poids, gel });
+}

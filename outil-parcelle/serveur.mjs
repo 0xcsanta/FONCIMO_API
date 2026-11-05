@@ -154,17 +154,21 @@ function calcule(r, gelMult = GEL_MULT_DEFAUT, poids = null) {
     mk("elevation", "Surélévation"),
     mk("demolition", nue ? "Construction neuve" : "Démolition-reconstruction"),
   ];
+  // Batiment protege (recensement 1-3) : potentiel nul (ni demolition ni transformation possible)
+  const protege = rec != null && rec >= 1 && rec <= 3;
+  if (protege) strategies.forEach((s) => { s.score = 0; });
   const best = strategies.reduce((a, b) => (b.score > a.score ? b : a));
 
   return {
-    densifiable: true, numero: r.numero, gel,
+    densifiable: true, numero: r.numero, gel, protege,
     inputs: {
       S: Math.round(S), aff, Fmax: Math.round(Fmax), Fexist: Math.round(Fexist),
       Nmax, Nact, SPexist: Math.round(SPexist), SPmax: Math.round(SPmax),
       annee, rec, gel, pente: c.pente, nue, logts: c.logts,
       contraintes: [c.limite && "alignement", c.archeo && "archéo", r.site_protege && "site protégé", r.degre_bruit].filter(Boolean).join(", ") || "—",
     },
-    strategies, best, note: best.score, label: labelFor(best.score),
+    strategies, best, note: best.score,
+    label: protege ? `Bâtiment protégé (recensement ${rec}) — potentiel nul` : labelFor(best.score),
   };
 }
 
