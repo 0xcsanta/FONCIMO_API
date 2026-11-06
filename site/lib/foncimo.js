@@ -39,8 +39,8 @@ export function evaluerParcelle(query, type = "auto", egrid) {
 }
 
 // Étape 2 : capturer l'email, révéler le détail, déclencher l'email Foncimo.
-export function capturerLead({ query, type = "auto", egrid, email, rdv }) {
-  return callFn({ action: "capturer", query, type, egrid, email, rdv });
+export function capturerLead({ query, type = "auto", egrid, email, telephone, rdv }) {
+  return callFn({ action: "capturer", query, type, egrid, email, telephone, rdv });
 }
 
 // Autocomplétion : adresses de Pully correspondant à la saisie.

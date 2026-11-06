@@ -197,10 +197,14 @@ Deno.serve(async (req) => {
   const email = String(body.email ?? "").trim();
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return json({ error: "Email invalide" }, 400);
 
+  const telephone = String(body.telephone ?? "").trim();
+  if (telephone.replace(/[^0-9]/g, "").length < 7) return json({ error: "Téléphone invalide" }, 400);
+
   const emailOk = await envoyerEmail(email, parc, pot);
 
   await supa.from("lead").insert({
     email,
+    telephone,
     egrid: parc.egrid,
     numero_parcelle: parc.numero,
     adresse: parc.adresse,

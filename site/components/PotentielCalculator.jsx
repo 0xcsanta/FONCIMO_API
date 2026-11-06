@@ -75,6 +75,7 @@ export default function PotentielCalculator({ autoFocusInput = true }) {
   const debRef = useRef(null);
 
   const [email, setEmail] = useState("");
+  const [telephone, setTelephone] = useState("");
   const [emailLoading, setEmailLoading] = useState(false);
   const [revealed, setRevealed] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
@@ -134,7 +135,7 @@ export default function PotentielCalculator({ autoFocusInput = true }) {
 
   async function submitEmail(e) {
     e.preventDefault();
-    if (!email.trim()) return;
+    if (!email.trim() || !telephone.trim()) return;
     setEmailLoading(true);
     setError("");
     try {
@@ -143,6 +144,7 @@ export default function PotentielCalculator({ autoFocusInput = true }) {
         query: data.resume.numero || query,
         type,
         email: email.trim(),
+        telephone: telephone.trim(),
         rdv: true,
       });
       setData((d) => ({ ...d, potentiel: res.potentiel }));
@@ -241,11 +243,23 @@ export default function PotentielCalculator({ autoFocusInput = true }) {
 
           {!revealed ? (
             <form className="email-capture" onSubmit={submitEmail}>
-              <p>Recevez le <strong>détail complet du calcul</strong> par email&nbsp;:</p>
+              <p>Recevez le <strong>détail complet du calcul</strong> et soyez rappelé&nbsp;: laissez votre email <strong>et votre téléphone</strong>.</p>
+              <input
+                className="modal-input"
+                type="tel"
+                inputMode="tel"
+                autoComplete="tel"
+                value={telephone}
+                onChange={(e) => setTelephone(e.target.value)}
+                placeholder="Votre téléphone (ex. 079 123 45 67)"
+                required
+                style={{ width: "100%", marginBottom: 8 }}
+              />
               <div className="email-row">
                 <input
                   className="modal-input"
                   type="email"
+                  autoComplete="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="votre@email.ch"
